@@ -91,6 +91,15 @@ CREATE TABLE IF NOT EXISTS backup_events (
 
 CREATE INDEX IF NOT EXISTS idx_backup_events_server_created
     ON backup_events(server_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS schedules (
+    server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+    action TEXT NOT NULL CHECK (action IN ('start', 'stop', 'restart')),
+    enabled INTEGER NOT NULL DEFAULT 1,
+    interval_seconds INTEGER NOT NULL CHECK (interval_seconds >= 60),
+    next_run TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 `)
 	if err != nil {
 		return fmt.Errorf("database migration: %w", err)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/example/conan-manager/internal/recoveryalert"
 	"github.com/example/conan-manager/internal/server"
 	_ "modernc.org/sqlite"
 )
@@ -118,7 +119,11 @@ func (m Manager) Recover(ctx context.Context, cfg server.Config, source string) 
 	if err := os.Rename(root, archive); err != nil {
 		return err
 	}
-	return syncDirectory(filepath.Dir(root))
+	if err := syncDirectory(filepath.Dir(root)); err != nil {
+		return err
+	}
+	_ = recoveryalert.Clear(cfg)
+	return nil
 }
 
 func validateAndCheckpoint(ctx context.Context, path string) error {

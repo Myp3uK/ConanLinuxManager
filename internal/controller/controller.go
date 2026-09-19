@@ -7,10 +7,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/example/conan-manager/internal/backup"
 	"github.com/example/conan-manager/internal/launchservice"
 	"github.com/example/conan-manager/internal/logreader"
 	"github.com/example/conan-manager/internal/process"
 	"github.com/example/conan-manager/internal/ramstate"
+	"github.com/example/conan-manager/internal/scheduler"
 	"github.com/example/conan-manager/internal/server"
 	"github.com/example/conan-manager/internal/steamcmd"
 	"github.com/example/conan-manager/internal/tmpfs"
@@ -34,6 +36,7 @@ type Controller struct {
 	health             map[string]Health
 	AvailabilityPolicy watchdog.AvailabilityPolicy
 	QueryHost          string
+	BackupRetention    int
 }
 
 type Job struct {
@@ -54,6 +57,43 @@ func (c *Controller) Start(ctx context.Context, id string) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
 	return c.start(ctx, id)
+}
+
+func (c *Controller) Restart(ctx context.Context, id string) error {
+	if err := c.Stop(ctx, id); err != nil {
+		return err
+	}
+	deadline := time.NewTimer(2 * time.Minute)
+	defer deadline.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if c.Lifecycle(id).State == "idle" {
+			return c.Start(ctx, id)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("restart timeout waiting for server %q to stop", id)
+		case <-ticker.C:
+		}
+	}
+}
+
+func (c *Controller) StartScheduler(ctx context.Context) {
+	go (scheduler.Runner{Schedules: c.Repo, Execute: func(ctx context.Context, item scheduler.Schedule) error {
+		switch item.Action {
+		case "start":
+			return c.Start(ctx, item.ServerID)
+		case "stop":
+			return c.Stop(ctx, item.ServerID)
+		case "restart":
+			return c.Restart(ctx, item.ServerID)
+		default:
+			return fmt.Errorf("unsupported schedule action %q", item.Action)
+		}
+	}}).Run(ctx)
 }
 
 func (c *Controller) start(ctx context.Context, id string) error {
@@ -158,6 +198,15 @@ func (c *Controller) monitor(cfg server.Config, watch *watchdog.Logs) {
 				if _, err := c.RAM.DrainBackups(cfg); err != nil {
 					c.lifecycleMu.Lock()
 					c.active[cfg.ID].Error = fmt.Sprintf("drain RAM backups: %v", err)
+					c.lifecycleMu.Unlock()
+				}
+			}
+			if c.BackupRetention > 0 {
+				if _, err := (backup.Manager{}).PruneConanBackups(ramstate.LayoutFor(cfg).PersistentSaved, c.BackupRetention); err != nil {
+					c.lifecycleMu.Lock()
+					if c.active[cfg.ID] != nil {
+						c.active[cfg.ID].Error = fmt.Sprintf("backup retention: %v", err)
+					}
 					c.lifecycleMu.Unlock()
 				}
 			}

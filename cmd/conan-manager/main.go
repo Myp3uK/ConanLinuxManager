@@ -37,6 +37,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	control.StartScheduler(ctx)
 
 	serveDone := make(chan error, 1)
 	logger.Info("conan manager started", "listen", cfg.ListenAddress, "database", cfg.DatabasePath)

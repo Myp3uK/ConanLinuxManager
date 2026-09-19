@@ -615,6 +615,13 @@ Smoke-тест на Ubuntu уже проверил:
 6. pre/post scripts;
 7. аварийное восстановление.
 
+В текущем milestone добавлен persistent interval scheduler для действий `start`,
+`stop` и `restart`. Расписание хранится в SQLite и управляется через
+`GET/PUT/DELETE /api/v1/servers/{id}/schedule`. Поле `next_run` передаётся в
+UTC RFC3339, минимальный `interval_seconds` — 60. Scheduler вызывает обычные
+controller-операции, поэтому применяются те же lifecycle locks, launcher handoff
+и блокировка `recovery_required`; расписание не является обходом offline recovery.
+
 ### Этап 5 — backup storage
 
 1. backup history в SQLite;
@@ -625,6 +632,19 @@ Smoke-тест на Ubuntu уже проверил:
 6. зашифрованные пароли;
 7. retention policy;
 8. восстановление конкретной копии.
+
+В текущем milestone добавлена локальная retention policy для Conan backup-файлов:
+`CONAN_MANAGER_BACKUP_RETENTION` сохраняет указанное число самых новых файлов с
+именем, содержащим `backup`, и расширением `.db`, `.bak` или `.backup`. Активная
+`game.db` в retention не участвует. Очистка выполняется во время monitor tick и
+не затрагивает каталоги recovery-сессии.
+
+При переходе сервера в `recovery_required` менеджер также атомарно создаёт
+`.conan-manager-recovery_required.json` рядом с persistent ConanSandbox. Файл
+переживает перезапуск процесса и содержит server ID, причину и timestamp; он
+удаляется только после успешного offline `conan-recover`. Это позволяет
+systemd timer или внешнему мониторингу обнаружить незавершённое восстановление
+без чтения journal.
 
 ### Этап 6 — web UI и production security
 

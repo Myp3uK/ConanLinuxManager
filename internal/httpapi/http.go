@@ -13,6 +13,7 @@ import (
 	"github.com/example/conan-manager/internal/config"
 	"github.com/example/conan-manager/internal/controller"
 	"github.com/example/conan-manager/internal/launchservice"
+	"github.com/example/conan-manager/internal/scheduler"
 	"github.com/example/conan-manager/internal/server"
 	"github.com/example/conan-manager/internal/store"
 	"os"
@@ -32,6 +33,7 @@ func NewManaged(db *store.Store, logger *slog.Logger) (http.Handler, *controller
 	cfg := config.Load()
 	control.AvailabilityPolicy = cfg.Availability
 	control.QueryHost = cfg.QueryHost
+	control.BackupRetention = cfg.BackupRetention
 	control.AdoptLaunchers(context.Background())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := db.Ping(); err != nil {
@@ -56,12 +58,63 @@ func NewManaged(db *store.Store, logger *slog.Logger) (http.Handler, *controller
 		}
 		writeJSON(w, http.StatusOK, job)
 	})
+	mux.HandleFunc("/api/v1/servers/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/schedule") {
+			scheduleHandler(repo)(w, r)
+			return
+		}
+		serverHandler(repo, control)(w, r)
+	})
 	mux.HandleFunc("/api/v1/servers", serversHandler(repo))
-	mux.HandleFunc("/api/v1/servers/", serverHandler(repo, control))
 	handler := logging(mux, logger)
 	handler = requestProtection(handler, cfg.AllowedOrigin)
 	handler = BasicAuth(cfg.AdminUsername, cfg.AdminPassword)(handler)
 	return handler, control
+}
+
+func scheduleHandler(repo *server.Repository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/servers/"), "/schedule")
+		if id == "" || strings.Contains(id, "/") {
+			writeError(w, http.StatusNotFound, nil)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			value, err := repo.GetSchedule(r.Context(), id)
+			if err != nil {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, value)
+		case http.MethodPut:
+			var value struct {
+				Action          string    `json:"action"`
+				Enabled         bool      `json:"enabled"`
+				IntervalSeconds int       `json:"interval_seconds"`
+				NextRun         time.Time `json:"next_run"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&value); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			schedule := scheduler.Schedule{ServerID: id, Action: value.Action, Enabled: value.Enabled, IntervalSeconds: value.IntervalSeconds, NextRun: value.NextRun}
+			if err := repo.SetSchedule(r.Context(), schedule); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, schedule)
+		case http.MethodDelete:
+			if err := repo.DeleteSchedule(r.Context(), id); err != nil {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.Header().Set("Allow", "GET, PUT, DELETE")
+			writeError(w, http.StatusMethodNotAllowed, nil)
+		}
+	}
 }
 
 func serversHandler(repo *server.Repository) http.HandlerFunc {

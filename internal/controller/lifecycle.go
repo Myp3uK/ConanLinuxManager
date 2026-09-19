@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/example/conan-manager/internal/ramstate"
+	"github.com/example/conan-manager/internal/recoveryalert"
 	"github.com/example/conan-manager/internal/server"
 	"github.com/example/conan-manager/internal/sessionlock"
 )
@@ -118,13 +119,19 @@ func (c *Controller) acquire(ctx context.Context, id, state string) (server.Conf
 }
 
 func (c *Controller) transition(id, state string, err error) {
+	cfg, cfgErr := c.Repo.Get(context.Background(), id)
 	c.lifecycleMu.Lock()
-	defer c.lifecycleMu.Unlock()
 	if held := c.active[id]; held != nil {
 		held.State = state
 		if err != nil {
 			held.Error = err.Error()
 		}
+	}
+	c.lifecycleMu.Unlock()
+	if cfgErr == nil && state == "recovery_required" && err != nil {
+		_ = recoveryalert.Write(cfg, err)
+	} else if cfgErr == nil && (state == "running" || state == "idle") {
+		_ = recoveryalert.Clear(cfg)
 	}
 }
 
@@ -145,6 +152,7 @@ func (c *Controller) Lifecycle(id string) Lifecycle {
 	}
 	if cfg, err := c.Repo.Get(context.Background(), id); err == nil {
 		if err := ramstate.Pending(cfg); err != nil {
+			_ = recoveryalert.Write(cfg, err)
 			return Lifecycle{State: "recovery_required", Error: err.Error()}
 		}
 	}

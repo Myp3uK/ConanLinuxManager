@@ -6,11 +6,58 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
 
 type Manager struct{}
+
+// PruneConanBackups keeps the newest retention backup files and removes older
+// ones. It never considers the active game database a retention candidate.
+func (Manager) PruneConanBackups(root string, keep int) (int, error) {
+	if root == "" {
+		return 0, fmt.Errorf("backup root is required")
+	}
+	if keep < 1 {
+		return 0, fmt.Errorf("backup retention must be at least 1")
+	}
+	type candidate struct {
+		path string
+		when time.Time
+	}
+	var candidates []candidate
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !isConanBackup(entry.Name()) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		candidates = append(candidates, candidate{path: path, when: info.ModTime()})
+		return nil
+	}); err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("scan backups for retention: %w", err)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].when.After(candidates[j].when)
+	})
+	removed := 0
+	for _, item := range candidates[keep:] {
+		if err := os.Remove(item.path); err != nil {
+			return removed, fmt.Errorf("remove expired backup %s: %w", item.path, err)
+		}
+		removed++
+	}
+	return removed, nil
+}
 
 func (Manager) PrepareRamdisk(path string) error {
 	if path == "" {
