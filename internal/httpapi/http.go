@@ -58,7 +58,10 @@ func NewManaged(db *store.Store, logger *slog.Logger) (http.Handler, *controller
 	})
 	mux.HandleFunc("/api/v1/servers", serversHandler(repo))
 	mux.HandleFunc("/api/v1/servers/", serverHandler(repo, control))
-	return BasicAuth(cfg.AdminUsername, cfg.AdminPassword)(logging(mux, logger)), control
+	handler := logging(mux, logger)
+	handler = requestProtection(handler, cfg.AllowedOrigin)
+	handler = BasicAuth(cfg.AdminUsername, cfg.AdminPassword)(handler)
+	return handler, control
 }
 
 func serversHandler(repo *server.Repository) http.HandlerFunc {
@@ -182,6 +185,37 @@ func logging(next http.Handler, logger *slog.Logger) http.Handler {
 		next.ServeHTTP(w, r)
 		logger.Info("http request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(started))
 	})
+}
+
+func requestProtection(next http.Handler, allowedOrigin string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "no-store")
+
+		// Browser state-changing requests must come from the same origin. CLI
+		// and server-to-server clients generally omit Origin and remain valid.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if origin := r.Header.Get("Origin"); origin != "" && origin != requestOrigin(r) && origin != allowedOrigin {
+				writeError(w, http.StatusForbidden, fmt.Errorf("origin is not allowed"))
+				return
+			}
+		}
+
+		if r.Body != nil && r.Method == http.MethodPost {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func requestOrigin(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

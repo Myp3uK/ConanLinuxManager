@@ -462,7 +462,7 @@ GET  /api/v1/jobs/{job-id}
 
 ## Аутентификация и безопасность
 
-Сейчас используется development Basic Auth:
+Сейчас используется Basic Auth:
 
 ```text
 CONAN_MANAGER_ADMIN_USERNAME
@@ -470,6 +470,14 @@ CONAN_MANAGER_ADMIN_PASSWORD
 ```
 
 `/healthz` доступен без авторизации.
+
+Если один из параметров Basic Auth пустой, management API блокируется с HTTP 503
+(fail closed); это предотвращает случайный запуск API без защиты. Для запросов с
+заголовком `Origin` изменяющие методы принимают только same-origin запросы.
+Также устанавливаются базовые security-заголовки и ограничивается размер POST body
+до 1 MiB.
+Если API работает за reverse proxy, публичный origin можно явно указать через
+`CONAN_MANAGER_ALLOWED_ORIGIN`.
 
 Перед доступом из интернета обязательно нужно добавить:
 
@@ -483,7 +491,8 @@ CONAN_MANAGER_ADMIN_PASSWORD
 - журнал действий;
 - запрет передачи секретов во frontend.
 
-Basic Auth без HTTPS нельзя считать достаточной production-защитой.
+Basic Auth без HTTPS нельзя считать достаточной production-защитой. Для production
+нужно использовать HTTPS через Caddy или Nginx и хранить env-файл с правами 0600.
 
 ## Установка Ubuntu
 

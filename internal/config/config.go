@@ -12,6 +12,7 @@ type Config struct {
 	DatabasePath  string
 	AdminUsername string
 	AdminPassword string
+	AllowedOrigin string
 	Availability  watchdog.AvailabilityPolicy
 	QueryHost     string
 }
@@ -22,6 +23,7 @@ func Load() Config {
 		DatabasePath:  env("CONAN_MANAGER_DATABASE", "/var/lib/conan-manager/manager.db"),
 		AdminUsername: os.Getenv("CONAN_MANAGER_ADMIN_USERNAME"),
 		AdminPassword: os.Getenv("CONAN_MANAGER_ADMIN_PASSWORD"),
+		AllowedOrigin: os.Getenv("CONAN_MANAGER_ALLOWED_ORIGIN"),
 		QueryHost:     env("CONAN_MANAGER_QUERY_HOST", "127.0.0.1"),
 		Availability: watchdog.AvailabilityPolicy{
 			Interval:       duration("CONAN_MANAGER_QUERY_INTERVAL", 15*time.Second),

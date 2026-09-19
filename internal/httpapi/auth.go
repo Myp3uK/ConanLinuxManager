@@ -10,8 +10,14 @@ import (
 func BasicAuth(username, password string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if username == "" || password == "" || r.URL.Path == "/healthz" {
+			if r.URL.Path == "/healthz" {
 				next.ServeHTTP(w, r)
+				return
+			}
+			if username == "" || password == "" {
+				// Never expose the management API without credentials. This also
+				// makes a broken or incomplete environment file fail closed.
+				writeError(w, http.StatusServiceUnavailable, nil)
 				return
 			}
 			user, pass, ok := r.BasicAuth()

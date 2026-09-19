@@ -13,6 +13,8 @@ import (
 )
 
 func TestServerCRUDAPI(t *testing.T) {
+	t.Setenv("CONAN_MANAGER_ADMIN_USERNAME", "admin")
+	t.Setenv("CONAN_MANAGER_ADMIN_PASSWORD", "test-password")
 	db, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -27,6 +29,7 @@ func TestServerCRUDAPI(t *testing.T) {
 	}
 	body, _ := json.Marshal(payload)
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/servers", bytes.NewReader(body))
+	request.SetBasicAuth("admin", "test-password")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusCreated {
@@ -34,6 +37,7 @@ func TestServerCRUDAPI(t *testing.T) {
 	}
 
 	request = httptest.NewRequest(http.MethodGet, "/api/v1/servers/test", nil)
+	request.SetBasicAuth("admin", "test-password")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -41,9 +45,54 @@ func TestServerCRUDAPI(t *testing.T) {
 	}
 
 	request = httptest.NewRequest(http.MethodDelete, "/api/v1/servers/test", nil)
+	request.SetBasicAuth("admin", "test-password")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("delete status: %d", response.Code)
+	}
+}
+
+func TestAPIRequiresCredentialsButHealthIsPublic(t *testing.T) {
+	t.Setenv("CONAN_MANAGER_ADMIN_USERNAME", "")
+	t.Setenv("CONAN_MANAGER_ADMIN_PASSWORD", "")
+	db, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := New(db, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("health status: %d", response.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/info", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unconfigured auth status: %d", response.Code)
+	}
+}
+
+func TestAPIRejectsCrossOriginMutation(t *testing.T) {
+	t.Setenv("CONAN_MANAGER_ADMIN_USERNAME", "admin")
+	t.Setenv("CONAN_MANAGER_ADMIN_PASSWORD", "test-password")
+	db, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := New(db, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	request := httptest.NewRequest(http.MethodPost, "http://manager.test/api/v1/servers", bytes.NewReader([]byte(`{}`)))
+	request.SetBasicAuth("admin", "test-password")
+	request.Header.Set("Origin", "https://evil.test")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("cross-origin mutation status: %d", response.Code)
 	}
 }
