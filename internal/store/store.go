@@ -1,0 +1,99 @@
+package store
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	_ "modernc.org/sqlite"
+)
+
+type Store struct{ db *sql.DB }
+
+func Open(path string) (*Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, fmt.Errorf("create database directory: %w", err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	for _, pragma := range []string{
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA foreign_keys = ON",
+		"PRAGMA busy_timeout = 5000",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("sqlite pragma: %w", err)
+		}
+	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Store{db: db}, nil
+}
+
+func (s *Store) Close() error { return s.db.Close() }
+
+func (s *Store) Ping() error { return s.db.Ping() }
+
+func (s *Store) DB() *sql.DB { return s.db }
+
+func migrate(db *sql.DB) error {
+	_, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS servers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    engine TEXT NOT NULL CHECK (engine IN ('ue5', 'ue4')),
+    runtime TEXT NOT NULL CHECK (runtime IN ('native', 'wine', 'proton')),
+    install_dir TEXT NOT NULL,
+    steamcmd_dir TEXT NOT NULL,
+    branch TEXT NOT NULL DEFAULT 'public',
+    launch_args TEXT NOT NULL DEFAULT '',
+    game_port INTEGER NOT NULL,
+    query_port INTEGER NOT NULL,
+    rcon_port INTEGER,
+    rcon_secret BLOB,
+    ramdisk_enabled INTEGER NOT NULL DEFAULT 1,
+    ramdisk_path TEXT NOT NULL,
+    ramdisk_size_mb INTEGER NOT NULL DEFAULT 2048,
+    sync_interval_seconds INTEGER NOT NULL DEFAULT 900,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS backup_targets (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('local', 'sftp', 'rsync', 's3')),
+    address TEXT,
+    port INTEGER,
+    username TEXT,
+    password_encrypted BLOB,
+    ssh_private_key TEXT,
+    remote_path TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS backup_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    source_path TEXT NOT NULL,
+    destination_path TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_backup_events_server_created
+    ON backup_events(server_id, created_at DESC);
+`)
+	if err != nil {
+		return fmt.Errorf("database migration: %w", err)
+	}
+	return nil
+}

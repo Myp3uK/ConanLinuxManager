@@ -1,0 +1,28 @@
+# Local/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Go build/test artifacts
+*.test
+*.exe
+*.out
+conan-manager-linux-amd64
+conan-launch-linux-amd64
+conan-bind-linux-amd64
+conan-recover-linux-amd64
+
+# Local runtime/configuration data
+*.db
+*.db-*
+.env
+*.env.local
+
+# Temporary reports and test output
+*.log
+report.json

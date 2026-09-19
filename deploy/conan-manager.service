@@ -1,0 +1,24 @@
+[Unit]
+Description=Conan Exiles Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=conan-manager
+Group=conan-manager
+EnvironmentFile=-/etc/conan-manager/conan-manager.env
+ExecStart=/opt/conan-manager/conan-manager
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2
+KillMode=mixed
+TimeoutStopSec=870
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/conan-manager /run/conan-manager
+
+[Install]
+WantedBy=multi-user.target

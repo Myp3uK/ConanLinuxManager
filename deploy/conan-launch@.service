@@ -1,0 +1,14 @@
+[Unit]
+Description=Conan isolated RAM launcher (%i)
+After=network.target
+
+[Service]
+Type=exec
+User=root
+ExecStart=/opt/conan-manager/conan-launch --config /etc/conan-manager/launch/%i.json
+KillMode=mixed
+TimeoutStopSec=810
+Restart=no
+UMask=0027
+StandardOutput=journal
+StandardError=journal
