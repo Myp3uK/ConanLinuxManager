@@ -63,6 +63,10 @@ func NewManaged(db *store.Store, logger *slog.Logger) (http.Handler, *controller
 			scheduleHandler(repo)(w, r)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/schedule/runs") {
+			scheduleRunsHandler(repo)(w, r)
+			return
+		}
 		serverHandler(repo, control)(w, r)
 	})
 	mux.HandleFunc("/api/v1/servers", serversHandler(repo))
@@ -70,6 +74,31 @@ func NewManaged(db *store.Store, logger *slog.Logger) (http.Handler, *controller
 	handler = requestProtection(handler, cfg.AllowedOrigin)
 	handler = BasicAuth(cfg.AdminUsername, cfg.AdminPassword)(handler)
 	return handler, control
+}
+
+func scheduleRunsHandler(repo *server.Repository) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/servers/"), "/schedule/runs")
+		if id == "" || strings.Contains(id, "/") || r.Method != http.MethodGet {
+			writeError(w, http.StatusNotFound, nil)
+			return
+		}
+		limit := 50
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			limit = parsed
+		}
+		items, err := repo.ScheduleRuns(r.Context(), id, limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, items)
+	}
 }
 
 func scheduleHandler(repo *server.Repository) http.HandlerFunc {

@@ -621,6 +621,10 @@ Smoke-тест на Ubuntu уже проверил:
 UTC RFC3339, минимальный `interval_seconds` — 60. Scheduler вызывает обычные
 controller-операции, поэтому применяются те же lifecycle locks, launcher handoff
 и блокировка `recovery_required`; расписание не является обходом offline recovery.
+История попыток доступна через `GET /api/v1/servers/{id}/schedule/runs` и хранит
+статус `succeeded` или `failed`, причину и timestamps.
+После ошибки scheduler делает до трёх повторов с backoff `1m`, `2m`, `4m`; после
+исчерпания повторов возвращается к обычному интервалу расписания.
 
 ### Этап 5 — backup storage
 

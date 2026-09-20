@@ -15,9 +15,8 @@
 
 ## 2. Надёжность scheduler
 
-- [ ] Добавить persistent execution history: запуск, завершение, duration, result
-      и error.
-- [ ] Добавить retry/backoff для временных ошибок lifecycle-операций.
+- [x] Добавить persistent execution history: запуск, завершение, result и error.
+- [x] Добавить retry/backoff для временных ошибок lifecycle-операций.
 - [ ] Защититься от повторного выполнения одного просроченного задания после
       длительного простоя manager.
 - [ ] Добавить cron/calendar schedules поверх текущих interval schedules.

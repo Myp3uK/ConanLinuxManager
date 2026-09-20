@@ -87,6 +87,13 @@ func TestScheduleAPI(t *testing.T) {
 	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"action":"stop"`)) {
 		t.Fatalf("schedule get: %d %s", response.Code, response.Body.String())
 	}
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/servers/test/schedule/runs", nil)
+	request.SetBasicAuth("admin", "test-password")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("schedule runs status: %d", response.Code)
+	}
 }
 
 func TestAPIRequiresCredentialsButHealthIsPublic(t *testing.T) {

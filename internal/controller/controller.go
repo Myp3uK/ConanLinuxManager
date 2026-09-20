@@ -82,7 +82,7 @@ func (c *Controller) Restart(ctx context.Context, id string) error {
 }
 
 func (c *Controller) StartScheduler(ctx context.Context) {
-	go (scheduler.Runner{Schedules: c.Repo, Execute: func(ctx context.Context, item scheduler.Schedule) error {
+	go (scheduler.Runner{Schedules: c.Repo, Record: c.Repo.RecordScheduleRun, Execute: func(ctx context.Context, item scheduler.Schedule) error {
 		switch item.Action {
 		case "start":
 			return c.Start(ctx, item.ServerID)

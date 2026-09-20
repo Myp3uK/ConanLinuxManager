@@ -100,6 +100,19 @@ CREATE TABLE IF NOT EXISTS schedules (
     next_run TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS scheduler_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
+    error TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduler_runs_server_started
+    ON scheduler_runs(server_id, started_at DESC);
 `)
 	if err != nil {
 		return fmt.Errorf("database migration: %w", err)

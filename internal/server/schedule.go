@@ -70,3 +70,38 @@ func (r *Repository) Advance(ctx context.Context, id string, next time.Time) err
 	_, err := r.db.ExecContext(ctx, `UPDATE schedules SET next_run=?, updated_at=? WHERE server_id=?`, next.UTC().Format(time.RFC3339Nano), time.Now().UTC().Format(time.RFC3339Nano), id)
 	return err
 }
+
+func (r *Repository) RecordScheduleRun(ctx context.Context, s scheduler.Schedule, started, finished time.Time, runErr error) error {
+	status := "succeeded"
+	var message any
+	if runErr != nil {
+		status = "failed"
+		message = runErr.Error()
+	}
+	_, err := r.db.ExecContext(ctx, `INSERT INTO scheduler_runs(server_id,action,status,error,started_at,finished_at) VALUES(?,?,?,?,?,?)`, s.ServerID, s.Action, status, message, started.UTC().Format(time.RFC3339Nano), finished.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (r *Repository) ScheduleRuns(ctx context.Context, id string, limit int) ([]scheduler.Run, error) {
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id,server_id,action,status,error,started_at,finished_at FROM scheduler_runs WHERE server_id=? ORDER BY started_at DESC LIMIT ?`, id, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]scheduler.Run, 0)
+	for rows.Next() {
+		var run scheduler.Run
+		var message, started, finished string
+		if err := rows.Scan(&run.ID, &run.ServerID, &run.Action, &run.Status, &message, &started, &finished); err != nil {
+			return nil, err
+		}
+		run.Error = message
+		run.StartedAt = parseDatabaseTime(started)
+		run.FinishedAt = parseDatabaseTime(finished)
+		result = append(result, run)
+	}
+	return result, rows.Err()
+}

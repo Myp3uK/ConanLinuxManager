@@ -15,6 +15,16 @@ type Schedule struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+type Run struct {
+	ID         int64     `json:"id"`
+	ServerID   string    `json:"server_id"`
+	Action     string    `json:"action"`
+	Status     string    `json:"status"`
+	Error      string    `json:"error,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+}
+
 func (s Schedule) Validate() error {
 	if s.ServerID == "" {
 		return fmt.Errorf("server_id is required")
@@ -36,10 +46,21 @@ type Runner struct {
 		Due(context.Context, time.Time) ([]Schedule, error)
 		Advance(context.Context, string, time.Time) error
 	}
-	Execute func(context.Context, Schedule) error
+	Execute    func(context.Context, Schedule) error
+	Record     func(context.Context, Schedule, time.Time, time.Time, error) error
+	RetryBase  time.Duration
+	MaxRetries int
+	failures   map[string]int
 }
 
 func (r Runner) Run(ctx context.Context) {
+	if r.RetryBase <= 0 {
+		r.RetryBase = time.Minute
+	}
+	if r.MaxRetries <= 0 {
+		r.MaxRetries = 3
+	}
+	r.failures = make(map[string]int)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -47,14 +68,56 @@ func (r Runner) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			items, err := r.Schedules.Due(ctx, now.UTC())
-			if err != nil {
-				continue
-			}
-			for _, item := range items {
-				_ = r.Execute(ctx, item)
-				_ = r.Schedules.Advance(ctx, item.ServerID, now.UTC().Add(time.Duration(item.IntervalSeconds)*time.Second))
-			}
+			_ = r.RunOnce(ctx, now.UTC())
 		}
 	}
+}
+
+func (r *Runner) RunOnce(ctx context.Context, now time.Time) error {
+	if r.RetryBase <= 0 {
+		r.RetryBase = time.Minute
+	}
+	if r.MaxRetries <= 0 {
+		r.MaxRetries = 3
+	}
+	if r.failures == nil {
+		r.failures = make(map[string]int)
+	}
+	items, err := r.Schedules.Due(ctx, now.UTC())
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		started := now.UTC()
+		runErr := r.Execute(ctx, item)
+		if r.Record != nil {
+			_ = r.Record(ctx, item, started, time.Now().UTC(), runErr)
+		}
+		next := now.UTC().Add(time.Duration(item.IntervalSeconds) * time.Second)
+		key := item.ServerID + "\x00" + item.Action
+		if runErr == nil {
+			delete(r.failures, key)
+		} else {
+			r.failures[key]++
+			if r.failures[key] <= r.MaxRetries {
+				next = now.UTC().Add(retryDelay(r.RetryBase, r.failures[key]))
+			} else {
+				delete(r.failures, key)
+			}
+		}
+		if err := r.Schedules.Advance(ctx, item.ServerID, next); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func retryDelay(base time.Duration, attempt int) time.Duration {
+	if attempt < 1 {
+		return base
+	}
+	for i := 1; i < attempt; i++ {
+		base *= 2
+	}
+	return base
 }
