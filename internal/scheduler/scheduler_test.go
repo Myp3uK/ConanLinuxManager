@@ -82,6 +82,38 @@ func TestDailyOccurrence(t *testing.T) {
 	}
 }
 
+func TestCronParsingAndNext(t *testing.T) {
+	cron, err := ParseCron("0 3 * * 1-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	location, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now, _ := time.Parse(time.RFC3339, "2026-09-18T01:00:00Z")
+	if got := cron.Next(now, location); got.Format(time.RFC3339) != "2026-09-21T01:00:00Z" {
+		t.Fatalf("next: %s", got)
+	}
+	if _, err := ParseCron("61 * * * *"); err == nil {
+		t.Fatal("invalid minute accepted")
+	}
+	if _, err := ParseCron("0 3 * *"); err == nil {
+		t.Fatal("wrong field count accepted")
+	}
+}
+
+func TestCronScheduleValidation(t *testing.T) {
+	s := Schedule{ServerID: "one", Action: "restart", Mode: "cron", CronExpression: "0 3 * * *", Timezone: "UTC", IntervalSeconds: 60, NextRun: time.Now()}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	s.Timezone = "Not/AZone"
+	if err := s.Validate(); err == nil {
+		t.Fatal("invalid timezone accepted")
+	}
+}
+
 func TestRunnerSkipsMissedIntervalsAfterDowntime(t *testing.T) {
 	store := &fakeSchedules{items: []Schedule{{ServerID: "one", Action: "start", IntervalSeconds: 60, NextRun: time.Unix(1, 0)}}}
 	executions := 0

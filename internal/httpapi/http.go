@@ -123,13 +123,15 @@ func scheduleHandler(repo *server.Repository) http.HandlerFunc {
 				Mode            string    `json:"mode"`
 				IntervalSeconds int       `json:"interval_seconds"`
 				DailyTime       string    `json:"daily_time"`
+				CronExpression  string    `json:"cron_expression"`
+				Timezone        string    `json:"timezone"`
 				NextRun         time.Time `json:"next_run"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&value); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
-			schedule := scheduler.Schedule{ServerID: id, Action: value.Action, Enabled: value.Enabled, Mode: value.Mode, IntervalSeconds: value.IntervalSeconds, DailyTime: value.DailyTime, NextRun: value.NextRun}
+			schedule := scheduler.Schedule{ServerID: id, Action: value.Action, Enabled: value.Enabled, Mode: value.Mode, IntervalSeconds: value.IntervalSeconds, DailyTime: value.DailyTime, CronExpression: value.CronExpression, Timezone: value.Timezone, NextRun: value.NextRun}
 			if err := repo.SetSchedule(r.Context(), schedule); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return

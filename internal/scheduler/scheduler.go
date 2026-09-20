@@ -11,6 +11,8 @@ type Schedule struct {
 	Action          string    `json:"action"`
 	Enabled         bool      `json:"enabled"`
 	Mode            string    `json:"mode"`
+	CronExpression  string    `json:"cron_expression,omitempty"`
+	Timezone        string    `json:"timezone,omitempty"`
 	IntervalSeconds int       `json:"interval_seconds"`
 	DailyTime       string    `json:"daily_time,omitempty"`
 	NextRun         time.Time `json:"next_run"`
@@ -37,8 +39,8 @@ func (s Schedule) Validate() error {
 	if s.Mode == "" {
 		s.Mode = "interval"
 	}
-	if s.Mode != "interval" && s.Mode != "daily" {
-		return fmt.Errorf("mode must be interval or daily")
+	if s.Mode != "interval" && s.Mode != "daily" && s.Mode != "cron" {
+		return fmt.Errorf("mode must be interval, daily or cron")
 	}
 	if s.IntervalSeconds < 60 {
 		return fmt.Errorf("interval_seconds must be at least 60")
@@ -46,6 +48,17 @@ func (s Schedule) Validate() error {
 	if s.Mode == "daily" {
 		if _, err := time.Parse("15:04", s.DailyTime); err != nil {
 			return fmt.Errorf("daily_time must use HH:MM UTC")
+		}
+	}
+	if s.Mode == "cron" {
+		if _, err := ParseCron(s.CronExpression); err != nil {
+			return err
+		}
+		if s.Timezone == "" {
+			s.Timezone = "UTC"
+		}
+		if _, err := time.LoadLocation(s.Timezone); err != nil {
+			return fmt.Errorf("invalid timezone: %w", err)
 		}
 	}
 	if s.NextRun.IsZero() {
@@ -127,6 +140,21 @@ func (r *Runner) RunOnce(ctx context.Context, now time.Time) error {
 
 func (s Schedule) NextOccurrence(now time.Time) time.Time {
 	if s.Mode != "daily" {
+		if s.Mode == "cron" {
+			cron, err := ParseCron(s.CronExpression)
+			if err != nil {
+				return now.UTC().Add(24 * time.Hour)
+			}
+			zone := s.Timezone
+			if zone == "" {
+				zone = "UTC"
+			}
+			location, err := time.LoadLocation(zone)
+			if err != nil {
+				return now.UTC().Add(24 * time.Hour)
+			}
+			return cron.Next(now.UTC(), location)
+		}
 		return now.UTC().Add(time.Duration(s.IntervalSeconds) * time.Second)
 	}
 	parsed, err := time.Parse("15:04", s.DailyTime)
