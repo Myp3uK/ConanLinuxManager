@@ -29,6 +29,9 @@ func (r *Repository) SetSchedule(ctx context.Context, s scheduler.Schedule) erro
 	if s.Mode == "daily" && s.IntervalSeconds == 0 {
 		s.IntervalSeconds = 86400
 	}
+	if s.Mode == "cron" && s.IntervalSeconds == 0 {
+		s.IntervalSeconds = 60
+	}
 	if s.Mode == "cron" && s.Timezone == "" {
 		s.Timezone = "UTC"
 	}

@@ -137,5 +137,47 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_runs_server_started
 			return fmt.Errorf("inspect schedules.%s: %w", column.name, err)
 		}
 	}
-	return nil
+	return migrateScheduleModes(db)
+}
+
+// Rebuild once: SQLite cannot extend the CHECK constraint on an existing column.
+// The transaction keeps both the original table and its rows intact on failure.
+func migrateScheduleModes(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS manager_migrations (name TEXT PRIMARY KEY)`); err != nil {
+		return err
+	}
+	var count int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM manager_migrations WHERE name='schedule-cron-modes-v1'`).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return tx.Commit()
+	}
+	_, err = tx.Exec(`
+CREATE TABLE schedules_cron_upgrade (
+ server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+ action TEXT NOT NULL CHECK(action IN ('start','stop','restart')),
+ enabled INTEGER NOT NULL DEFAULT 1,
+ mode TEXT NOT NULL DEFAULT 'interval' CHECK(mode IN ('interval','daily','cron')),
+ interval_seconds INTEGER NOT NULL CHECK(interval_seconds>=60),
+ daily_time TEXT,
+ cron_expression TEXT,
+ timezone TEXT NOT NULL DEFAULT 'UTC',
+ next_run TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+INSERT INTO schedules_cron_upgrade SELECT server_id,action,enabled,mode,interval_seconds,daily_time,cron_expression,timezone,next_run,updated_at FROM schedules;
+DROP TABLE schedules;
+ALTER TABLE schedules_cron_upgrade RENAME TO schedules;
+INSERT INTO manager_migrations VALUES ('schedule-cron-modes-v1');
+`)
+	if err != nil {
+		return fmt.Errorf("upgrade schedule modes: %w", err)
+	}
+	return tx.Commit()
 }

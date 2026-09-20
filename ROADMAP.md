@@ -86,7 +86,8 @@
 
 - [ ] Добавить Linux integration suite для launcher, bind-helper и tmpfs.
 - [ ] Добавить disposable tests для scheduler и retention.
-- [ ] Добавить upgrade test с предыдущей схемой SQLite.
+- [x] Проверить upgrade daily → cron: сохранение расписания, расширение CHECK,
+      повторное открытие базы, откат при ошибке и cron без interval_seconds.
 - [ ] Добавить systemd deployment test на чистом Ubuntu.
 - [ ] Проверить rollback после неудачного deploy.
 - [ ] Подготовить release checklist и operational runbook.

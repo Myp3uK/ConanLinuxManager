@@ -58,11 +58,12 @@ func TestLegacyScheduleMigrationAndDailyPersistence(t *testing.T) {
 	}
 	s.DailyTime = ""
 	s.Mode, s.CronExpression, s.Timezone = "cron", "0 3 * * *", "Europe/Berlin"
+	s.IntervalSeconds = 0
 	if err := r.SetSchedule(ctx, s); err != nil {
 		t.Fatal(err)
 	}
 	s, err = r.GetSchedule(ctx, "one")
-	if err != nil || s.Mode != "cron" || s.CronExpression != "0 3 * * *" || s.Timezone != "Europe/Berlin" {
+	if err != nil || s.Mode != "cron" || s.CronExpression != "0 3 * * *" || s.Timezone != "Europe/Berlin" || s.IntervalSeconds != 60 {
 		t.Fatalf("cron: %+v %v", s, err)
 	}
 	if err := r.RecordScheduleRun(ctx, scheduler.Schedule{ServerID: "one", Action: "stop"}, now, now.Add(time.Second), nil); err != nil {
