@@ -96,7 +96,9 @@ CREATE TABLE IF NOT EXISTS schedules (
     server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
     action TEXT NOT NULL CHECK (action IN ('start', 'stop', 'restart')),
     enabled INTEGER NOT NULL DEFAULT 1,
+    mode TEXT NOT NULL DEFAULT 'interval' CHECK (mode IN ('interval', 'daily')),
     interval_seconds INTEGER NOT NULL CHECK (interval_seconds >= 60),
+    daily_time TEXT,
     next_run TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -116,6 +118,20 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_runs_server_started
 `)
 	if err != nil {
 		return fmt.Errorf("database migration: %w", err)
+	}
+	for _, column := range []struct{ name, definition string }{
+		{"mode", "TEXT NOT NULL DEFAULT 'interval'"},
+		{"daily_time", "TEXT"},
+	} {
+		var present string
+		err := db.QueryRow(`SELECT name FROM pragma_table_info('schedules') WHERE name=?`, column.name).Scan(&present)
+		if err == sql.ErrNoRows {
+			if _, err := db.Exec(`ALTER TABLE schedules ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+				return fmt.Errorf("add schedules.%s: %w", column.name, err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("inspect schedules.%s: %w", column.name, err)
+		}
 	}
 	return nil
 }

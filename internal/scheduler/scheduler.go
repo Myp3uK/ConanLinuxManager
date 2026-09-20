@@ -10,7 +10,9 @@ type Schedule struct {
 	ServerID        string    `json:"server_id"`
 	Action          string    `json:"action"`
 	Enabled         bool      `json:"enabled"`
+	Mode            string    `json:"mode"`
 	IntervalSeconds int       `json:"interval_seconds"`
+	DailyTime       string    `json:"daily_time,omitempty"`
 	NextRun         time.Time `json:"next_run"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }
@@ -32,8 +34,19 @@ func (s Schedule) Validate() error {
 	if s.Action != "start" && s.Action != "stop" && s.Action != "restart" {
 		return fmt.Errorf("action must be start, stop or restart")
 	}
+	if s.Mode == "" {
+		s.Mode = "interval"
+	}
+	if s.Mode != "interval" && s.Mode != "daily" {
+		return fmt.Errorf("mode must be interval or daily")
+	}
 	if s.IntervalSeconds < 60 {
 		return fmt.Errorf("interval_seconds must be at least 60")
+	}
+	if s.Mode == "daily" {
+		if _, err := time.Parse("15:04", s.DailyTime); err != nil {
+			return fmt.Errorf("daily_time must use HH:MM UTC")
+		}
 	}
 	if s.NextRun.IsZero() {
 		return fmt.Errorf("next_run is required")
@@ -93,7 +106,7 @@ func (r *Runner) RunOnce(ctx context.Context, now time.Time) error {
 		if r.Record != nil {
 			_ = r.Record(ctx, item, started, time.Now().UTC(), runErr)
 		}
-		next := now.UTC().Add(time.Duration(item.IntervalSeconds) * time.Second)
+		next := item.NextOccurrence(now.UTC())
 		key := item.ServerID + "\x00" + item.Action
 		if runErr == nil {
 			delete(r.failures, key)
@@ -110,6 +123,21 @@ func (r *Runner) RunOnce(ctx context.Context, now time.Time) error {
 		}
 	}
 	return nil
+}
+
+func (s Schedule) NextOccurrence(now time.Time) time.Time {
+	if s.Mode != "daily" {
+		return now.UTC().Add(time.Duration(s.IntervalSeconds) * time.Second)
+	}
+	parsed, err := time.Parse("15:04", s.DailyTime)
+	if err != nil {
+		return now.UTC().Add(24 * time.Hour)
+	}
+	next := time.Date(now.UTC().Year(), now.UTC().Month(), now.UTC().Day(), parsed.Hour(), parsed.Minute(), 0, 0, time.UTC)
+	if !next.After(now.UTC()) {
+		next = next.Add(24 * time.Hour)
+	}
+	return next
 }
 
 func retryDelay(base time.Duration, attempt int) time.Duration {

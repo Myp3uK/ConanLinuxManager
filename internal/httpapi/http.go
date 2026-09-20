@@ -120,19 +120,26 @@ func scheduleHandler(repo *server.Repository) http.HandlerFunc {
 			var value struct {
 				Action          string    `json:"action"`
 				Enabled         bool      `json:"enabled"`
+				Mode            string    `json:"mode"`
 				IntervalSeconds int       `json:"interval_seconds"`
+				DailyTime       string    `json:"daily_time"`
 				NextRun         time.Time `json:"next_run"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&value); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
-			schedule := scheduler.Schedule{ServerID: id, Action: value.Action, Enabled: value.Enabled, IntervalSeconds: value.IntervalSeconds, NextRun: value.NextRun}
+			schedule := scheduler.Schedule{ServerID: id, Action: value.Action, Enabled: value.Enabled, Mode: value.Mode, IntervalSeconds: value.IntervalSeconds, DailyTime: value.DailyTime, NextRun: value.NextRun}
 			if err := repo.SetSchedule(r.Context(), schedule); err != nil {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
-			writeJSON(w, http.StatusOK, schedule)
+			saved, err := repo.GetSchedule(r.Context(), id)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, saved)
 		case http.MethodDelete:
 			if err := repo.DeleteSchedule(r.Context(), id); err != nil {
 				writeError(w, http.StatusNotFound, err)

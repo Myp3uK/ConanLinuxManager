@@ -66,3 +66,42 @@ func TestRetryDelay(t *testing.T) {
 		t.Fatalf("delay: %v", got)
 	}
 }
+
+func TestDailyOccurrence(t *testing.T) {
+	s := Schedule{Mode: "daily", DailyTime: "03:00"}
+	for _, tc := range []struct{ now, want string }{
+		{"2026-09-20T02:59:59Z", "2026-09-20T03:00:00Z"},
+		{"2026-09-20T03:00:00Z", "2026-09-21T03:00:00Z"},
+		{"2026-12-31T23:00:00Z", "2027-01-01T03:00:00Z"},
+		{"2026-09-20T05:30:00+03:00", "2026-09-20T03:00:00Z"},
+	} {
+		now, _ := time.Parse(time.RFC3339, tc.now)
+		if got := s.NextOccurrence(now).Format(time.RFC3339); got != tc.want {
+			t.Fatalf("%s: got %s want %s", tc.now, got, tc.want)
+		}
+	}
+}
+
+func TestRunnerSkipsMissedIntervalsAfterDowntime(t *testing.T) {
+	store := &fakeSchedules{items: []Schedule{{ServerID: "one", Action: "start", IntervalSeconds: 60, NextRun: time.Unix(1, 0)}}}
+	executions := 0
+	runner := &Runner{
+		Schedules: store,
+		Execute: func(context.Context, Schedule) error {
+			executions++
+			return nil
+		},
+	}
+	if err := runner.RunOnce(context.Background(), time.Unix(86400, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if executions != 1 {
+		t.Fatalf("missed intervals replayed: %d", executions)
+	}
+	store.mu.Lock()
+	next := store.advance[0]
+	store.mu.Unlock()
+	if !next.Equal(time.Unix(86460, 0)) {
+		t.Fatalf("next run was not anchored to current time: %v", next)
+	}
+}

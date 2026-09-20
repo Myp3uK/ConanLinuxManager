@@ -12,7 +12,7 @@ func (r *Repository) GetSchedule(ctx context.Context, id string) (scheduler.Sche
 	var s scheduler.Schedule
 	var enabled int
 	var next, updated string
-	err := r.db.QueryRowContext(ctx, `SELECT server_id, action, enabled, interval_seconds, next_run, updated_at FROM schedules WHERE server_id=?`, id).Scan(&s.ServerID, &s.Action, &enabled, &s.IntervalSeconds, &next, &updated)
+	err := r.db.QueryRowContext(ctx, `SELECT server_id, action, enabled, mode, interval_seconds, COALESCE(daily_time,''), next_run, updated_at FROM schedules WHERE server_id=?`, id).Scan(&s.ServerID, &s.Action, &enabled, &s.Mode, &s.IntervalSeconds, &s.DailyTime, &next, &updated)
 	if err != nil {
 		return s, err
 	}
@@ -23,6 +23,12 @@ func (r *Repository) GetSchedule(ctx context.Context, id string) (scheduler.Sche
 }
 
 func (r *Repository) SetSchedule(ctx context.Context, s scheduler.Schedule) error {
+	if s.Mode == "" {
+		s.Mode = "interval"
+	}
+	if s.Mode == "daily" && s.IntervalSeconds == 0 {
+		s.IntervalSeconds = 86400
+	}
 	if err := s.Validate(); err != nil {
 		return err
 	}
@@ -30,7 +36,7 @@ func (r *Repository) SetSchedule(ctx context.Context, s scheduler.Schedule) erro
 		return err
 	}
 	now := time.Now().UTC()
-	_, err := r.db.ExecContext(ctx, `INSERT INTO schedules(server_id,action,enabled,interval_seconds,next_run,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(server_id) DO UPDATE SET action=excluded.action,enabled=excluded.enabled,interval_seconds=excluded.interval_seconds,next_run=excluded.next_run,updated_at=excluded.updated_at`, s.ServerID, s.Action, s.Enabled, s.IntervalSeconds, s.NextRun.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+	_, err := r.db.ExecContext(ctx, `INSERT INTO schedules(server_id,action,enabled,mode,interval_seconds,daily_time,next_run,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(server_id) DO UPDATE SET action=excluded.action,enabled=excluded.enabled,mode=excluded.mode,interval_seconds=excluded.interval_seconds,daily_time=excluded.daily_time,next_run=excluded.next_run,updated_at=excluded.updated_at`, s.ServerID, s.Action, s.Enabled, s.Mode, s.IntervalSeconds, s.DailyTime, s.NextRun.UTC().Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	return err
 }
 
@@ -47,7 +53,7 @@ func (r *Repository) DeleteSchedule(ctx context.Context, id string) error {
 }
 
 func (r *Repository) Due(ctx context.Context, now time.Time) ([]scheduler.Schedule, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT server_id, action, enabled, interval_seconds, next_run, updated_at FROM schedules WHERE enabled=1 AND next_run<=?`, now.UTC().Format(time.RFC3339Nano))
+	rows, err := r.db.QueryContext(ctx, `SELECT server_id, action, enabled, mode, interval_seconds, COALESCE(daily_time,''), next_run, updated_at FROM schedules WHERE enabled=1 AND julianday(next_run)<=julianday(?)`, now.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +63,7 @@ func (r *Repository) Due(ctx context.Context, now time.Time) ([]scheduler.Schedu
 		var s scheduler.Schedule
 		var enabled int
 		var next, updated string
-		if err := rows.Scan(&s.ServerID, &s.Action, &enabled, &s.IntervalSeconds, &next, &updated); err != nil {
+		if err := rows.Scan(&s.ServerID, &s.Action, &enabled, &s.Mode, &s.IntervalSeconds, &s.DailyTime, &next, &updated); err != nil {
 			return nil, err
 		}
 		s.Enabled, s.NextRun, s.UpdatedAt = enabled != 0, parseDatabaseTime(next), parseDatabaseTime(updated)
@@ -86,7 +92,7 @@ func (r *Repository) ScheduleRuns(ctx context.Context, id string, limit int) ([]
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
-	rows, err := r.db.QueryContext(ctx, `SELECT id,server_id,action,status,error,started_at,finished_at FROM scheduler_runs WHERE server_id=? ORDER BY started_at DESC LIMIT ?`, id, limit)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,server_id,action,status,COALESCE(error,''),started_at,COALESCE(finished_at,'') FROM scheduler_runs WHERE server_id=? ORDER BY id DESC LIMIT ?`, id, limit)
 	if err != nil {
 		return nil, err
 	}
