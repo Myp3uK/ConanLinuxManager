@@ -1,11 +1,12 @@
 # План оставшихся работ
 
-Этот файл описывает задачи после milestone `v0.1.0` и commit
-`c2d9fe1 Add retention recovery alerts and scheduler`.
+Сверено с исходниками `e9795f1` (после milestone `v0.1.0`).
+Отметка [x] означает реализованный и локально проверенный объём, а не production
+acceptance. Scheduler/retention/alerting новой версии на node2 ещё не развёрнуты.
 
 ## 1. Зафиксировать текущий milestone на Linux
 
-- [ ] Отправить текущие commits в `origin/main`.
+- [x] Отправить implementation commits до `e9795f1` в `origin/main`.
 - [ ] Проверить миграцию SQLite на существующей установке `node2`.
 - [ ] Проверить scheduler на Linux: `start`, `stop`, `restart`, перезапуск manager
       и корректное завершение scheduler при SIGTERM.
@@ -15,12 +16,19 @@
 
 ## 2. Надёжность scheduler
 
-- [x] Добавить persistent execution history: запуск, завершение, result и error.
-- [x] Добавить retry/backoff для временных ошибок lifecycle-операций.
-- [x] Защититься от повторного выполнения одного просроченного задания после
-      длительного простоя manager.
+- [x] Сохранять завершённые попытки scheduler в SQLite: timestamps, result и error.
+- [x] Добавить in-memory retry/backoff 1/2/4 минуты для ошибок controller.
+- [x] Не воспроизводить все пропущенные интервалы при успешном продвижении next_run.
+- [ ] Добавить атомарный claim задания и защиту от повторов после crash/ошибки БД.
+- [ ] Обрабатывать ошибки записи истории/next_run, фиксировать running/interrupted,
+      дождаться завершения scheduler при shutdown.
+- [ ] Сохранять retry-счётчики, различать постоянные и временные ошибки,
+      учитывать изменение/удаление расписания во время выполнения.
+- [ ] Проверить длительные операции: актуальность next_run и блокирование очереди.
 - [x] Добавить календарное расписание daily HH:MM UTC и миграцию interval schedules.
 - [x] Добавить пяти-полевой cron и поддержку IANA часовых поясов.
+- [ ] Исправить fallback при отсутствии cron-совпадения в пределах 366 дней;
+      проверить leap-year, невозможные даты, DST, шаги и DOM/DOW semantics.
 - [ ] Добавить cron-расширения `L`, `W`, `#` при необходимости.
 - [ ] Добавить проверку active players перед плановым stop/restart.
 - [ ] Добавить pre/post scripts с ограниченными окружением, timeout и логированием.
@@ -41,6 +49,9 @@
 
 ## 4. Recovery и alerting
 
+- [x] Добавить best-effort JSON recovery alert и очистку после offline recovery.
+- [ ] Обрабатывать ошибки записи/очистки alert, добавить fsync и обнаружение
+      оставшихся markers без необходимости HTTP-запроса.
 - [ ] Подключить recovery alert к внешнему уведомлению.
 - [ ] Добавить Discord Webhook уведомления для `recovery_required`, failed jobs
       и ошибок scheduler.
@@ -84,7 +95,9 @@
 
 ## 8. Тестирование и эксплуатация
 
-- [ ] Добавить Linux integration suite для launcher, bind-helper и tmpfs.
+- [x] Добавить отдельные scripts для launcher, API/adoption, polkit и recovery CLI.
+- [ ] Объединить Linux integration suite и выполнить bind-helper/private namespace tests
+      на подходящем хосте (на node2 unshare был запрещён окружением).
 - [x] Добавить disposable-тесты retention: пустой каталог, количество копий
       относительно лимита, повторная очистка, сохранность DB/WAL/SHM и symlink.
 - [ ] Добавить end-to-end disposable tests для scheduler на Linux.
