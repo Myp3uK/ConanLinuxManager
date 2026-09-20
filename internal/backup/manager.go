@@ -38,6 +38,9 @@ func (Manager) PruneConanBackups(root string, keep int) (int, error) {
 		if err != nil {
 			return err
 		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
 		candidates = append(candidates, candidate{path: path, when: info.ModTime()})
 		return nil
 	}); err != nil {
@@ -45,6 +48,9 @@ func (Manager) PruneConanBackups(root string, keep int) (int, error) {
 			return 0, nil
 		}
 		return 0, fmt.Errorf("scan backups for retention: %w", err)
+	}
+	if len(candidates) <= keep {
+		return 0, nil
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		return candidates[i].when.After(candidates[j].when)

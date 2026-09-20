@@ -85,7 +85,9 @@
 ## 8. Тестирование и эксплуатация
 
 - [ ] Добавить Linux integration suite для launcher, bind-helper и tmpfs.
-- [ ] Добавить disposable tests для scheduler и retention.
+- [x] Добавить disposable-тесты retention: пустой каталог, количество копий
+      относительно лимита, повторная очистка, сохранность DB/WAL/SHM и symlink.
+- [ ] Добавить end-to-end disposable tests для scheduler на Linux.
 - [x] Проверить upgrade daily → cron: сохранение расписания, расширение CHECK,
       повторное открытие базы, откат при ошибке и cron без interval_seconds.
 - [ ] Добавить systemd deployment test на чистом Ubuntu.
