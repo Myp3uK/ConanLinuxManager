@@ -1,6 +1,13 @@
 // Package rcon speaks the Source RCON protocol that Conan Exiles' RconPlugin
 // implements: a TCP connection, a password packet, then one command packet per
 // request. Text is UTF-8 in both directions, so Cyrillic and spaces pass as is.
+//
+// Conan's implementation departs from Source in two ways, seen on a live UE5
+// server: an answer carries the id of the previous request rather than its
+// own (login with id 7 is answered with id 0, the next command with id 7),
+// and answers have type 2 rather than 0. So answers cannot be matched to
+// requests by id; the client sends one request at a time and takes what
+// comes back as its answer. Only id -1, a refused login, is meaningful.
 package rcon
 
 import (
@@ -27,6 +34,10 @@ const (
 	maxBody = 1 << 16
 	// maxCommand keeps a request within one packet, which is all Conan reads.
 	maxCommand = 4000
+	// splitAt is the packet size from which an answer may continue in the next
+	// packet; the protocol cuts answers at 4096 bytes. A shorter packet is the
+	// whole answer, so no time is spent waiting for more.
+	splitAt = 4000
 )
 
 // ErrAuth means the server refused the password.
@@ -38,8 +49,8 @@ type Client struct {
 	mu     sync.Mutex
 	conn   net.Conn
 	nextID int32
-	// settle is how long Exec waits for further packets of a long answer after
-	// the first one. Conan sends nothing to mark the end of an answer.
+	// settle is how long Exec waits for the next packet of an answer that was
+	// cut at the packet limit. Conan sends nothing to mark the end of an answer.
 	settle time.Duration
 }
 
@@ -50,7 +61,7 @@ func Dial(ctx context.Context, address, password string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rcon: connect %s: %w", address, err)
 	}
-	c := &Client{conn: conn, nextID: 1, settle: 300 * time.Millisecond}
+	c := &Client{conn: conn, nextID: 1, settle: 1500 * time.Millisecond}
 	if err := c.auth(ctx, password); err != nil {
 		conn.Close()
 		return nil, err
@@ -77,8 +88,8 @@ func (c *Client) auth(ctx context.Context, password string) error {
 	if err := write(c.conn, id, typeAuth, password); err != nil {
 		return err
 	}
-	// Source servers send an empty response before the auth answer; some
-	// implementations skip it. Read until the auth answer arrives.
+	// Source servers send an empty response before the auth answer; Conan
+	// does not. Read until the auth answer arrives.
 	for {
 		p, err := read(c.conn)
 		if err != nil {
@@ -89,9 +100,6 @@ func (c *Client) auth(ctx context.Context, password string) error {
 		}
 		if p.id == -1 {
 			return ErrAuth
-		}
-		if p.id != id {
-			return fmt.Errorf("rcon: login answered with id %d, want %d", p.id, id)
 		}
 		return nil
 	}
@@ -108,26 +116,21 @@ func (c *Client) Exec(ctx context.Context, command string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.deadline(ctx)
-	id := c.id()
-	if err := write(c.conn, id, typeCommand, command); err != nil {
+	if err := write(c.conn, c.id(), typeCommand, command); err != nil {
 		return "", err
 	}
 	var answer strings.Builder
-	for {
-		p, err := read(c.conn)
-		if err != nil {
-			return "", fmt.Errorf("rcon: %q: %w", command, err)
-		}
-		if p.id == id && p.kind == typeResponse {
-			answer.WriteString(p.body)
-			break
-		}
+	p, err := read(c.conn)
+	if err != nil {
+		return "", fmt.Errorf("rcon: %q: %w", command, err)
 	}
-	// A long answer arrives as several packets with the same id. Collect the
-	// ones already on the way, then give up after a short silence.
-	for {
+	answer.WriteString(p.body)
+	// A long answer arrives as several full packets. A packet that fills the
+	// limit may be followed by more; one exactly at the limit is not, which
+	// only the silence that follows can tell.
+	for p.size >= splitAt {
 		_ = c.conn.SetReadDeadline(time.Now().Add(c.settle))
-		p, err := read(c.conn)
+		p, err = read(c.conn)
 		if err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
@@ -135,10 +138,9 @@ func (c *Client) Exec(ctx context.Context, command string) (string, error) {
 			}
 			return "", fmt.Errorf("rcon: %q: %w", command, err)
 		}
-		if p.id == id && p.kind == typeResponse {
-			answer.WriteString(p.body)
-		}
+		answer.WriteString(p.body)
 	}
+	_ = c.conn.SetReadDeadline(time.Time{})
 	return answer.String(), nil
 }
 
@@ -152,6 +154,7 @@ func (c *Client) id() int32 {
 }
 
 type packet struct {
+	size int32
 	id   int32
 	kind int32
 	body string
@@ -184,6 +187,7 @@ func read(r io.Reader) (packet, error) {
 		return packet{}, err
 	}
 	p := packet{
+		size: size,
 		id:   int32(binary.LittleEndian.Uint32(buf[0:4])),
 		kind: int32(binary.LittleEndian.Uint32(buf[4:8])),
 	}

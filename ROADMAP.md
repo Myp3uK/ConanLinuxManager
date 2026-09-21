@@ -51,12 +51,15 @@ bind mount в private mount namespace.
       (`CONAN_MANAGER_UPDATE_CHECK_INTERVAL`).
 - [x] Прагмы SQLite (`busy_timeout`, `foreign_keys`, WAL) задаются в DSN для
       каждого соединения пула, а не только для первого.
-- [ ] RCON: клиент (Source RCON, UTF-8), CLI `conan-manager rcon -a -p -P -q`,
+- [x] RCON: клиент (Source RCON, UTF-8), CLI `conan-manager rcon -a -p -P -q`,
       `POST /servers/{id}/rcon`, `GET /servers/{id}/players`, настройки из
       `[RconPlugin]` в `Game.ini`, предупреждения игрокам (`warnings`) перед
       плановым stop/restart, автообновлением и по `"warn": true`, с досрочным
-      завершением, когда игроков нет. **Код и тесты готовы; не проверено на
-      живом Conan UE5** — формат `listplayers` и имя команды `broadcast`.
+      завершением, когда игроков нет. Проверено на живом Conan UE5: вход,
+      `listplayers`, `broadcast` с кириллицей, API, рестарт с `warn` на пустом
+      сервере. Conan отвечает с id *предыдущего* запроса и типом 2 — клиент
+      не сопоставляет ответы по id (то же найдено в MooRCON). Объявления при
+      игроках онлайн проверены только тестами.
 - [x] Бэкапы менеджера: `VACUUM INTO` с работающего сервера без остановки
       (проверено на живой базе node2: 23 мс), `quick_check`, sha256, хуки
       `pre/post_backup`, хранение в `CONAN_MANAGER_BACKUP_DIR/<id>` (можно на
@@ -91,8 +94,7 @@ bind mount в private mount namespace.
 - [x] Исправить fallback при отсутствии cron-совпадения; проверить leap-year,
       невозможные даты, DST, шаги и DOM/DOW semantics.
 - [ ] Добавить cron-расширения `L`, `W`, `#` при необходимости.
-- [ ] Добавить проверку active players перед плановым stop/restart (код готов,
-      ждёт живой проверки RCON — см. 1a).
+- [x] Добавить проверку active players перед плановым stop/restart (см. 1a).
 - [x] Добавить pre/post scripts с ограниченными окружением, timeout и логированием
       (см. раздел 1a, «Хуки»).
 
@@ -197,8 +199,8 @@ bind mount в private mount namespace.
 ## 7. Game/server integrations
 
 - [ ] Реализовать player count через query protocol.
-- [ ] Реализовать RCON (код готов, см. 1a).
-- [ ] Добавить предупреждения игрокам перед scheduled stop/restart (код готов, см. 1a).
+- [x] Реализовать RCON (см. 1a).
+- [x] Добавить предупреждения игрокам перед scheduled stop/restart (см. 1a).
 - [ ] Проверить и стабилизировать UE4 через Wine/Proton.
 - [ ] Добавить отдельный Ubuntu smoke-test для UE4.
 - [ ] Добавить автоматический импорт существующего Conan-сервера.

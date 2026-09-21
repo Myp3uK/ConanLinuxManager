@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// fakeServer answers like Conan's RconPlugin: an empty response and an auth
-// answer at login, then handler's output split into packets of chunk bytes.
+// fakeServer answers like Conan's RconPlugin on a live UE5 server: every
+// answer has type 2 and the id of the previous request, and a long output is
+// split into packets of chunk bytes.
 func fakeServer(t *testing.T, password string, chunk int, handler func(string) string) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -26,26 +27,27 @@ func fakeServer(t *testing.T, password string, chunk int, handler func(string) s
 			}
 			go func(conn net.Conn) {
 				defer conn.Close()
+				previous := int32(0)
 				for {
 					p, err := read(conn)
 					if err != nil {
 						return
 					}
+					id := previous
+					previous = p.id
 					switch p.kind {
 					case typeAuth:
-						_ = write(conn, p.id, typeResponse, "")
-						id := p.id
 						if p.body != password {
 							id = -1
 						}
-						_ = write(conn, id, typeAuthResp, "")
+						_ = write(conn, id, typeAuthResp, "Authenticated.")
 					case typeCommand:
 						out := handler(p.body)
 						for len(out) > chunk {
-							_ = write(conn, p.id, typeResponse, out[:chunk])
+							_ = write(conn, id, typeAuthResp, out[:chunk])
 							out = out[chunk:]
 						}
-						_ = write(conn, p.id, typeResponse, out)
+						_ = write(conn, id, typeAuthResp, out)
 					}
 				}
 			}(conn)
@@ -127,5 +129,33 @@ func TestFromINI(t *testing.T) {
 	}
 	if FromINI(map[string]string{"rconport": "1", "rconpassword": "x"}).Usable() == nil {
 		t.Fatal("disabled RCON accepted")
+	}
+}
+
+// Captured from a live Conan UE5 server with nobody online.
+func TestParsePlayersOfAnEmptyLiveServer(t *testing.T) {
+	out := "Idx | Char name | Player name | User ID | Platform ID | Platform Name\n"
+	if got := ParsePlayers(out); len(got) != 0 {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// A short answer is complete in one packet and must not wait out the pause
+// that detects the end of a long one.
+func TestShortAnswersDoNotWait(t *testing.T) {
+	addr := fakeServer(t, "p", 4096, func(string) string { return "Message has been broadcast." })
+	c, err := Dial(context.Background(), addr, "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	start := time.Now()
+	for i := 0; i < 5; i++ {
+		if _, err := c.Exec(context.Background(), "broadcast hi"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("five short commands took %v", took)
 	}
 }
