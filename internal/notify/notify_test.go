@@ -254,3 +254,19 @@ func TestServerTextIsTheMessage(t *testing.T) {
 		t.Fatalf("%+v", e)
 	}
 }
+
+// Every event with a title must be selectable in the channel form.
+func TestCatalogCoversTitledEvents(t *testing.T) {
+	listed := map[string]bool{}
+	for _, e := range Catalog() {
+		if e.Title == "" {
+			t.Errorf("%s: no title", e.Type)
+		}
+		listed[e.Type] = true
+	}
+	for typ := range titles {
+		if !listed[string(typ)] {
+			t.Errorf("%s: missing from the catalog", typ)
+		}
+	}
+}

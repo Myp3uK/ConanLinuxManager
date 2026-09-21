@@ -7,14 +7,20 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/example/conan-manager/internal/config"
 	"github.com/example/conan-manager/internal/httpapi"
+	"github.com/example/conan-manager/internal/panel"
 	"github.com/example/conan-manager/internal/store"
 	"github.com/example/conan-manager/internal/unitservice"
 )
+
+// exitRestart asks systemd to start the manager again; it is not 2, which
+// RestartPreventExitStatus reserves for a failed shutdown.
+const exitRestart = 75
 
 func main() {
 	// The conan-server@ unit runs this binary to exec the game. It must not load
@@ -39,6 +45,16 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+	// Settings saved in the panel take the place of the environment file.
+	stored, err := panel.NewStore(db.DB()).Values(context.Background())
+	if err != nil {
+		logger.Error("read panel settings", "error", err)
+		os.Exit(1)
+	}
+	if len(stored) > 0 {
+		cfg = config.LoadFrom(panel.Overlay(stored, os.Getenv))
+		logger.Info("panel settings applied", "count", len(stored))
+	}
 
 	handler, control := httpapi.NewManaged(db, logger, cfg)
 	server := &http.Server{
@@ -53,6 +69,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	control.Logger = logger
+	var restartRequested atomic.Bool
+	control.RestartManager = func() {
+		restartRequested.Store(true)
+		stop()
+	}
 	waitScheduler := control.StartScheduler(ctx)
 	// Servers the operator left running come back after a reboot. Adoption of
 	// still-running units has already happened, so nothing starts twice.
@@ -101,6 +122,11 @@ func main() {
 		logger.Warn("background hooks still running at exit")
 	}
 	logger.Info("manager shutdown complete; server persistence finished")
+	if restartRequested.Load() {
+		// Restart=on-failure in conan-manager.service starts the manager again.
+		_ = db.Close()
+		os.Exit(exitRestart)
+	}
 	if serveFailed {
 		_ = db.Close()
 		os.Exit(1)

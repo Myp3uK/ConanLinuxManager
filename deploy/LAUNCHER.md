@@ -22,7 +22,7 @@ CONAN_MANAGER_LAUNCHER_IDS=test
 
 HTTP start сверяет ID, install/RAM paths, native runtime, executable и аргументы
 с JSON. В systemd передаётся только имя заранее разрешённого unit. Старт означает
-принятие запуска сервиса, а не готовность Conan. PID в snapshot — PID launcher.
+принятие запуска сервиса, а не готовность Conan. PID в snapshot - PID launcher.
 Monitor опрашивает systemd до окончания сервиса, включая persist. Ошибка опроса
 не освобождает reservation. Stop/watchdog/shutdown используют systemctl stop;
 symlink Load/Drain/Flush для этих ID отключены. Время остановки unit 810 секунд,
@@ -40,7 +40,7 @@ HTTP reservation остаётся. Проверка Pending повторяетс
 для параллельного provision/install заранее создавайте отдельные каталоги.
 Вложенные существующие установки между разными процессами не поддерживаются:
 flock inode не является иерархической блокировкой. Пути должны быть выделенными,
-без внешних переименований/замены каталогов. Windows — только in-process leases.
+без внешних переименований/замены каталогов. Windows - только in-process leases.
 
 ## Текущие ограничения включения
 

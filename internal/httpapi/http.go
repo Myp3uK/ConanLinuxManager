@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/example/conan-manager/internal/hooks"
 	"github.com/example/conan-manager/internal/launchservice"
 	"github.com/example/conan-manager/internal/notify"
+	"github.com/example/conan-manager/internal/panel"
 	"github.com/example/conan-manager/internal/scheduler"
 	"github.com/example/conan-manager/internal/security"
 	"github.com/example/conan-manager/internal/server"
@@ -36,6 +38,12 @@ type api struct {
 	history  *eventlog.Log
 	channels *notify.Repository
 	notifier *notify.Dispatcher
+	admins   *panel.Admins
+	settings *panel.Store
+	// startup holds the overridable settings the running manager started
+	// with, to tell which saved changes still wait for a restart.
+	startup map[string]string
+	started time.Time
 }
 
 func New(db *store.Store, logger *slog.Logger) http.Handler {
@@ -94,7 +102,15 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	control.AdoptUnits(context.Background())
 
 	a := &api{repo: repo, control: control, logger: logger, detail: cfg.ExposeErrorDetail,
-		history: history, channels: channels, notifier: notifier}
+		history: history, channels: channels, notifier: notifier,
+		admins: panel.NewAdmins(db.DB(), cfg.AdminUsername, cfg.AdminPassword), settings: panel.NewStore(db.DB()),
+		startup: map[string]string{}, started: time.Now().UTC()}
+	if stored, err := a.settings.Values(context.Background()); err == nil {
+		lookup := panel.Overlay(stored, os.Getenv)
+		for _, s := range panel.Settings {
+			a.startup[s.Key] = lookup(s.Key)
+		}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := db.Ping(); err != nil {
@@ -110,16 +126,24 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	mux.HandleFunc("GET /api/v1/events", a.events)
 	mux.HandleFunc("GET /api/v1/hooks", a.hookScripts)
 	mux.HandleFunc("/api/v1/notifications", a.notificationChannels)
+	mux.HandleFunc("GET /api/v1/notification-events", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, notify.Catalog())
+	})
 	mux.HandleFunc("/api/v1/notifications/", a.notificationChannel)
 	mux.HandleFunc("/api/v1/servers/", a.routeServer)
 	mux.HandleFunc("/api/v1/servers", a.servers)
+	mux.HandleFunc("GET /api/v1/me", a.me)
+	mux.HandleFunc("/api/v1/admins", a.adminList)
+	mux.HandleFunc("/api/v1/admins/", a.admin)
+	mux.HandleFunc("/api/v1/panel/settings", a.panelSettings)
+	mux.HandleFunc("POST /api/v1/panel/restart", a.restartManager)
 	// The browser interface; everything not under /api is the page and its
 	// assets, behind the same authentication as the API.
 	mux.Handle("/", webui.Handler())
 
 	handler := logging(mux, logger)
 	handler = requestProtection(handler, cfg.AllowedOrigin)
-	handler = BasicAuth(cfg.AdminUsername, cfg.AdminPassword)(handler)
+	handler = BasicAuth(a.admins)(handler)
 	return handler, control
 }
 

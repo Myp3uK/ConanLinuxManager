@@ -90,6 +90,9 @@ type Controller struct {
 	BackupDir string
 	// BackupKeep is how many manager backups each server keeps; 0 keeps all.
 	BackupKeep int
+	// RestartManager, when set, stops the manager so its service starts it
+	// again; the panel uses it to apply saved settings.
+	RestartManager func()
 	// detached is closed when the manager shuts down while unit servers keep
 	// running, and tells their monitors to let go without touching them.
 	detached   chan struct{}

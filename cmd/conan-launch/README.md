@@ -1,4 +1,4 @@
-# conan-launch — автономный root-operated launcher
+# conan-launch - автономный root-operated launcher
 
 Экспериментальный Linux launcher для **отдельных тестовых установок** с RAM-базой.
 HTTP controller поддерживает opt-in backend (см. `deploy/LAUNCHER.md`), по умолчанию
@@ -45,7 +45,7 @@ Saved и установка не на tmpfs. Игра должна иметь н
 
 ## Последовательность
 
-1. Родитель создаёт worker в отдельных mount и PID namespaces; worker — PID 1.
+1. Родитель создаёт worker в отдельных mount и PID namespaces; worker - PID 1.
 2. Worker делает propagation private, берёт locks, проверяет отсутствие старой
    сессии и создаёт совместимые с `conan-recover` baseline/manifest на SSD.
 3. Копирует DB/WAL/SHM в RAM и устанавливает три файловых bind mounts.
@@ -60,7 +60,7 @@ Saved и установка не на tmpfs. Игра должна иметь н
 8. Под той же блокировкой проверяет содержимое RAM/database и удаляет только
    три известных regular DB-файла. Архив на SSD сохраняется для диагностики.
 
-Exit 0 — успешный выход игры и persist. Exit 2 — ошибка launcher, persist или
+Exit 0 - успешный выход игры и persist. Exit 2 - ошибка launcher, persist или
 неуспешный выход игры (даже если persist успешен; это явно отмечается в stderr).
 При SIGKILL родителя worker получает SIGKILL, ядро завершает все процессы его
 PID namespace. Persist тогда не выполняется: marker требует offline recovery.

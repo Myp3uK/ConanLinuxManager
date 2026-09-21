@@ -21,6 +21,8 @@ function h(tag, attrs, ...children) {
     // A style attribute would be refused by the page's content policy;
     // styles set through the CSSOM are not.
     else if (key === 'style') el.style.cssText = value;
+    // Titles use the page's tooltip rather than the browser's.
+    else if (key === 'title') { if (value) el.setAttribute('data-tip', value); }
     else if (key.startsWith('on')) el.addEventListener(key.slice(2), value);
     else if (['value', 'checked', 'disabled', 'selected', 'open'].includes(key)) el[key] = value;
     else el.setAttribute(key, value === true ? '' : value);
@@ -106,15 +108,15 @@ async function runJob(job) {
     await new Promise(r => setTimeout(r, 2000));
     try { job = await api('GET', '/jobs/' + enc(job.id)); } catch (e) { toast(name + ': ' + e.message, 'bad'); return job; }
   }
-  if (job.status === 'failed') toast(name + ': ошибка — ' + (job.error || 'без подробностей'), 'bad');
+  if (job.status === 'failed') toast(name + ': ошибка - ' + (job.error || 'без подробностей'), 'bad');
   else toast(name + ': готово' + (job.error ? ' (' + job.error + ')' : ''));
   return job;
 }
 
 function isSet(t) { return t && !t.startsWith('0001-'); }
-function fmtTime(t) { return isSet(t) ? new Date(t).toLocaleString('ru-RU') : '—'; }
+function fmtTime(t) { return isSet(t) ? new Date(t).toLocaleString('ru-RU') : '-'; }
 function fmtAgo(t) {
-  if (!isSet(t)) return '—';
+  if (!isSet(t)) return '-';
   let s = Math.round((Date.now() - new Date(t).getTime()) / 1000);
   const future = s < 0; s = Math.abs(s);
   const text = s < 60 ? s + ' с' : s < 3600 ? Math.floor(s / 60) + ' мин' : s < 86400 ? Math.floor(s / 3600) + ' ч ' + Math.floor(s % 3600 / 60) + ' мин' : Math.floor(s / 86400) + ' д ' + Math.floor(s % 86400 / 3600) + ' ч';
@@ -135,15 +137,15 @@ const STATES = {
   deleting: ['Удаляется', 'warn'], recovery_required: ['Нужно восстановление', 'bad'],
 };
 function stateBadge(state) {
-  const [label, kind] = STATES[state] || [state || '—', ''];
+  const [label, kind] = STATES[state] || [state || '-', ''];
   return h('span', { class: 'badge ' + kind, text: label });
 }
 const AVAILABILITY = {
   responsive: ['Отвечает', 'ok'], starting: ['Загружается', 'warn'], suspect: ['Задержки', 'warn'],
-  unavailable: ['Не отвечает', 'bad'], inactive: ['—', ''],
+  unavailable: ['Не отвечает', 'bad'], inactive: ['-', ''],
 };
 function availabilityBadge(a) {
-  if (!a || !a.state) return h('span', { class: 'muted', text: '—' });
+  if (!a || !a.state) return h('span', { class: 'muted', text: '-' });
   const [label, kind] = AVAILABILITY[a.state] || [a.state, ''];
   return h('span', { class: 'badge ' + kind, text: label });
 }
@@ -164,7 +166,92 @@ function table(headers, rows, empty = 'Пусто') {
     h('tbody', {}, rows.map(r => h('tr', {}, r.map(c => h('td', {}, c)))))));
 }
 function field(label, input, hint) {
-  return [h('label', { text: label }), input, hint ? h('div', { class: 'hint', text: hint }) : null];
+  return [h('label', {}, label, hint ? helpIcon(hint) : null), input];
+}
+
+// ---------- tooltips ----------
+
+// One bubble for the whole page, positioned from the document rather than the
+// element, so containers with overflow do not clip it (as on moorgame.ru).
+const tooltip = h('div', { class: 'tooltip', role: 'tooltip' });
+document.body.append(tooltip);
+let tipOwner = null;
+
+function helpIcon(text) {
+  return h('span', { class: 'help', tabindex: '0', 'data-tip': text, 'aria-label': text, text: '?' });
+}
+function showTip(el) {
+  const text = el.getAttribute('data-tip');
+  if (!text) return;
+  tipOwner = el;
+  tooltip.textContent = text;
+  tooltip.classList.add('visible');
+  const r = el.getBoundingClientRect();
+  const t = tooltip.getBoundingClientRect();
+  const side = r.top - t.height - 10 < 0 ? 'bottom' : 'top';
+  const center = r.left + r.width / 2;
+  const left = Math.min(Math.max(8, center - t.width / 2), document.documentElement.clientWidth - t.width - 8);
+  const top = side === 'top' ? r.top - t.height - 9 : r.bottom + 9;
+  tooltip.dataset.side = side;
+  tooltip.style.left = (left + scrollX) + 'px';
+  tooltip.style.top = (top + scrollY) + 'px';
+  tooltip.style.setProperty('--arrow-x', Math.min(Math.max(10, center - left), t.width - 10) + 'px');
+}
+function hideTip() { tipOwner = null; tooltip.classList.remove('visible'); }
+document.addEventListener('mouseover', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el && el !== tipOwner) showTip(el); else if (!el && tipOwner) hideTip(); });
+document.addEventListener('focusin', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el) showTip(el); });
+document.addEventListener('focusout', hideTip);
+document.addEventListener('scroll', hideTip, true);
+
+// ---------- INI editor ----------
+
+// highlightIni colours one INI text. Unreal values are often structs such as
+// (Name="x",Count=2), so keys, strings and numbers inside them are coloured too.
+function highlightIni(text) {
+  const out = [];
+  const span = (cls, t) => h('span', { class: cls, text: t });
+  const value = v => {
+    const trimmed = v.trim();
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return [span('ini-number', v)];
+    if (/^(true|false)$/i.test(trimmed)) return [span('ini-bool', v)];
+    const parts = [];
+    const re = /("(?:[^"\\]|\\.)*"?)|([A-Za-z_][\w.]*)(?==)|(-?\b\d+(?:\.\d+)?\b)|\b(True|False|true|false)\b|([(),=])/g;
+    let last = 0;
+    for (let m; (m = re.exec(v));) {
+      if (m.index > last) parts.push(v.slice(last, m.index));
+      parts.push(span(m[1] ? 'ini-string' : m[2] ? 'ini-key' : m[3] ? 'ini-number' : m[4] ? 'ini-bool' : 'ini-punct', m[0]));
+      last = re.lastIndex;
+    }
+    if (last < v.length) parts.push(v.slice(last));
+    return parts;
+  };
+  for (const line of text.split('\n')) {
+    let m;
+    if (/^\s*[;#]/.test(line)) out.push(span('ini-comment', line));
+    else if ((m = /^(\s*)(\[[^\]]*\])(.*)$/.exec(line))) out.push(m[1], span('ini-section', m[2]), m[3]);
+    else if ((m = /^(\s*)([^=]+?)(\s*=)(.*)$/.exec(line))) out.push(m[1], span('ini-key', m[2]), span('ini-punct', m[3]), value(m[4]));
+    else out.push(line);
+    out.push('\n');
+  }
+  return out;
+}
+
+function iniEditor(textarea) {
+  const pre = h('pre', { 'aria-hidden': 'true' });
+  const paint = () => { replace(pre, highlightIni(textarea.value)); sync(); };
+  const sync = () => { pre.scrollTop = textarea.scrollTop; pre.scrollLeft = textarea.scrollLeft; };
+  textarea.setAttribute('wrap', 'off');
+  textarea.addEventListener('input', paint);
+  textarea.addEventListener('scroll', sync);
+  // Tab indents instead of leaving the editor.
+  textarea.addEventListener('keydown', e => {
+    if (e.key !== 'Tab' || e.shiftKey || e.ctrlKey || e.altKey) return;
+    e.preventDefault();
+    textarea.setRangeText('\t', textarea.selectionStart, textarea.selectionEnd, 'end');
+    paint();
+  });
+  paint();
+  return h('div', { class: 'ini-editor' }, pre, textarea);
 }
 
 // ---------- server actions shared by the list and the server page ----------
@@ -214,7 +301,7 @@ async function refreshPlayers(details) {
 }
 
 function playersText(id, state) {
-  if (state !== 'running') return h('span', { class: 'muted', text: '—' });
+  if (state !== 'running') return h('span', { class: 'muted', text: '-' });
   const p = players[id];
   if (!p) return h('span', { class: 'muted', text: '…' });
   if (p.error) return h('span', { class: 'muted', title: p.error, text: 'нет RCON' });
@@ -279,7 +366,7 @@ function eventsTable(items, withServer) {
     items.map(e => [
       h('span', { class: 'small', text: fmtTime(e.time) }),
       severityBadge(e.severity),
-      withServer ? (e.server_id ? h('a', { href: `#/server/${enc(e.server_id)}`, text: e.server_name || e.server_id }) : '—') : null,
+      withServer ? (e.server_id ? h('a', { href: `#/server/${enc(e.server_id)}`, text: e.server_name || e.server_id }) : '-') : null,
       h('span', {}, e.message, h('div', { class: 'muted small mono', text: e.type })),
       h('span', { class: 'small mono' }, Object.entries(e.details || {}).map(([k, v]) => h('div', { text: `${k}: ${v}` }))),
     ].filter(x => x !== null)), 'Событий нет');
@@ -349,7 +436,7 @@ async function viewNewServer() {
       field('Игровой порт', gamePort, 'Игра занимает этот порт и следующий за ним.'),
       field('Query-порт', queryPort),
       field('Аргументы запуска', args),
-      field('Интервал бэкапов игры, с', backup, '0 — оставить как в игре. Каждый бэкап копирует базу целиком: чем реже, тем меньше износ SSD.'),
+      field('Интервал бэкапов игры, с', backup, '0 - оставить как в игре. Каждый бэкап копирует базу целиком: чем реже, тем меньше износ SSD.'),
       field('Перезапускать при падении', restart),
       field('Сразу установить файлы', installNow, 'SteamCMD скачает сервер (~30 ГБ).'),
     ), h('div', { class: 'row end' }, create)));
@@ -372,14 +459,14 @@ function hooksHelp(info) {
   return h('div', {},
     h('p', { class: 'small' }, 'Доступные скрипты: ', info.scripts.length
       ? info.scripts.map((x, i) => [i ? ', ' : '', h('span', { class: 'mono', text: x.name }), x.usable ? '' : h('span', { class: 'badge bad', text: 'не запустится' })])
-      : h('span', { class: 'muted', text: 'пока нет' }), '. Несколько скриптов — через запятую, выполняются по порядку.'),
+      : h('span', { class: 'muted', text: 'пока нет' }), '. Несколько скриптов - через запятую, выполняются по порядку.'),
     h('details', {}, h('summary', { class: 'small', text: 'Как добавить свой скрипт' }),
       h('ol', { class: 'small' },
         h('li', {}, 'Положите файл в ', h('span', { class: 'mono', text: info.dir }), ' на сервере (по SSH).'),
-        h('li', {}, 'Сделайте владельцем root и исполняемым: ', h('span', { class: 'mono', text: 'chown root:root скрипт; chmod 755 скрипт' }), '. Файл, который может менять кто-то кроме root, не запустится — иначе через него можно было бы выполнить что угодно с правами менеджера.'),
-        h('li', {}, 'Обновите эту страницу — скрипт появится в списке, впишите его имя в нужное событие и сохраните.')),
-      h('p', { class: 'small', text: 'Скрипту передаются переменные: CONAN_SERVER_ID, CONAN_SERVER_NAME, CONAN_INSTALL_DIR, CONAN_SAVED_DIR, CONAN_GAME_PORT, CONAN_QUERY_PORT, CONAN_RCON_PORT, CONAN_RCON_PASSWORD; для бэкапа ещё CONAN_BACKUP_PATH, для падения — CONAN_EXIT_CODE. «Перед запуском», «Перед обновлением» и «Перед бэкапом» могут отменить действие, завершившись с ненулевым кодом. Лимит — 5 минут.' }),
-      h('pre', { class: 'log', text: '#!/bin/sh\n# /etc/conan-manager/hooks/upload-backup — копия бэкапа на другой сервер\nscp "$CONAN_BACKUP_PATH" backup@storage:/backups/"$CONAN_SERVER_ID"/\n\n#!/bin/sh\n# /etc/conan-manager/hooks/hello — сообщение в игру через RCON\nconan-manager rcon -p "$CONAN_RCON_PORT" -q "broadcast Сервер снова в строю!"' })));
+        h('li', {}, 'Сделайте владельцем root и исполняемым: ', h('span', { class: 'mono', text: 'chown root:root скрипт; chmod 755 скрипт' }), '. Файл, который может менять кто-то кроме root, не запустится - иначе через него можно было бы выполнить что угодно с правами менеджера.'),
+        h('li', {}, 'Обновите эту страницу - скрипт появится в списке, впишите его имя в нужное событие и сохраните.')),
+      h('p', { class: 'small', text: 'Скрипту передаются переменные: CONAN_SERVER_ID, CONAN_SERVER_NAME, CONAN_INSTALL_DIR, CONAN_SAVED_DIR, CONAN_GAME_PORT, CONAN_QUERY_PORT, CONAN_RCON_PORT, CONAN_RCON_PASSWORD; для бэкапа ещё CONAN_BACKUP_PATH, для падения - CONAN_EXIT_CODE. «Перед запуском», «Перед обновлением» и «Перед бэкапом» могут отменить действие, завершившись с ненулевым кодом. Лимит - 5 минут.' }),
+      h('pre', { class: 'log', text: '#!/bin/sh\n# /etc/conan-manager/hooks/upload-backup - копия бэкапа на другой сервер\nscp "$CONAN_BACKUP_PATH" backup@storage:/backups/"$CONAN_SERVER_ID"/\n\n#!/bin/sh\n# /etc/conan-manager/hooks/hello - сообщение в игру через RCON\nconan-manager rcon -p "$CONAN_RCON_PORT" -q "broadcast Сервер снова в строю!"' })));
 }
 
 // GAME_FIELDS are the settings the Dedicated Server Launcher shows on its main
@@ -388,7 +475,7 @@ function hooksHelp(info) {
 const REGIONS = [['0', 'Европа'], ['1', 'Северная Америка'], ['2', 'Азия'], ['3', 'Австралия'], ['4', 'Южная Америка'], ['5', 'Япония']];
 const GAME_FIELDS = [
   { file: 'Engine', section: 'OnlineSubsystem', key: 'ServerName', label: 'Название в списке серверов', def: '' },
-  { file: 'ServerSettings', section: 'ServerSettings', key: 'ServerPassword', label: 'Пароль для входа', type: 'password', def: '', hint: 'Пусто — вход без пароля.' },
+  { file: 'ServerSettings', section: 'ServerSettings', key: 'ServerPassword', label: 'Пароль для входа', type: 'password', def: '', hint: 'Пусто - вход без пароля.' },
   { file: 'ServerSettings', section: 'ServerSettings', key: 'AdminPassword', label: 'Пароль администратора', type: 'password', def: '' },
   { file: 'Game', section: '/Script/Engine.GameSession', key: 'MaxPlayers', label: 'Максимум игроков', type: 'number', def: '40' },
   { file: 'ServerSettings', section: 'ServerSettings', key: 'serverRegion', label: 'Регион', options: REGIONS, def: '0' },
@@ -424,7 +511,7 @@ async function gameSettings(ctx, running, reload) {
     const value = stored ?? f.def;
     let input;
     if (f.bool) input = h('input', { type: 'checkbox', checked: /^true$/i.test(value) });
-    else if (f.options) input = h('select', {}, f.options.map(([v, t]) => h('option', { value: v, text: `${v} — ${t}`, selected: v === value })));
+    else if (f.options) input = h('select', {}, f.options.map(([v, t]) => h('option', { value: v, text: `${v} - ${t}`, selected: v === value })));
     else input = h('input', { type: f.type || 'text', value, autocomplete: 'off' });
     if (f.type === 'password') input.onfocus = () => { input.type = 'text'; };
     input.disabled = running;
@@ -458,31 +545,48 @@ const TABS = [
   ['schedule', 'Рестарты'], ['backups', 'Бэкапы'], ['config', 'Конфиги'], ['history', 'История'],
 ];
 
+// serverPage is the server page on screen. Switching tabs of the same server
+// keeps its header and tab bar, so they do not jump while the tab loads.
+let serverPage = null;
+
 async function viewServer(id, tab) {
   tab = TABS.some(t => t[0] === tab) ? tab : 'overview';
-  const headBox = h('div', { class: 'head' });
-  const body = h('div');
-  replace(app, headBox,
-    h('nav', { class: 'tabs' }, TABS.map(([key, label]) => h('a', { href: `#/server/${enc(id)}/${key}`, class: key === tab ? 'active' : '', text: label }))),
-    body);
-  const ctx = { id, detail: null };
-  ctx.refresh = async () => {
-    try { ctx.detail = await api('GET', `/servers/${enc(id)}`); }
-    catch (e) {
-      if (e.status === 404) { replace(app, h('div', { class: 'notice bad', text: `Сервер «${id}» не найден.` }), h('a', { href: '#/', text: '← Серверы' })); }
-      else toast(e.message, 'bad');
-      return false;
-    }
-    const d = ctx.detail;
-    replace(headBox, h('a', { href: '#/', text: '← Серверы' }), h('h1', { text: d.server.name }),
-      h('span', { class: 'muted mono small', text: d.server.id }), stateBadge(d.lifecycle.state),
-      h('span', { class: 'spacer' }), actionButtons(d, ctx.refresh));
-    if (ctx.onRefresh) ctx.onRefresh(d);
-    return true;
-  };
-  if (!await ctx.refresh()) return;
-  every(5000, ctx.refresh);
-  await TAB_VIEWS[tab](body, ctx);
+  let page = serverPage && serverPage.id === id && app.contains(serverPage.body) ? serverPage : null;
+  if (!page) {
+    const headBox = h('div', { class: 'head server-head' });
+    const tabs = h('nav', { class: 'tabs' }, TABS.map(([key, label]) => h('a', { href: `#/server/${enc(id)}/${key}`, 'data-tab': key, text: label })));
+    const body = h('div');
+    replace(app, headBox, tabs, body);
+    const ctx = { id, detail: null };
+    ctx.refresh = async () => {
+      try { ctx.detail = await api('GET', `/servers/${enc(id)}`); }
+      catch (e) {
+        if (e.status === 404) { replace(app, h('div', { class: 'notice bad', text: `Сервер «${id}» не найден.` }), h('a', { href: '#/', text: '← Серверы' })); }
+        else toast(e.message, 'bad');
+        return false;
+      }
+      const d = ctx.detail;
+      replace(headBox, h('a', { href: '#/', text: '← Серверы' }), h('h1', { text: d.server.name }),
+        h('span', { class: 'muted mono small', text: d.server.id }), stateBadge(d.lifecycle.state),
+        h('span', { class: 'spacer' }), actionButtons(d, ctx.refresh));
+      if (ctx.onRefresh) ctx.onRefresh(d);
+      return true;
+    };
+    page = serverPage = { id, tabs, body, ctx };
+    if (!await ctx.refresh()) return;
+  }
+  page.tabs.querySelectorAll('a').forEach(a => a.classList.toggle('active', a.dataset.tab === tab));
+  // The old tab's timers are gone with the route change; the header's are
+  // started again here, and the body keeps its height until the tab draws.
+  page.ctx.onRefresh = null;
+  every(5000, page.ctx.refresh);
+  // Each tab draws into its own box: a late answer for the tab just left
+  // lands in a detached box instead of over the new tab.
+  page.body.style.minHeight = page.body.offsetHeight + 'px';
+  const box = h('div');
+  replace(page.body, box);
+  try { await TAB_VIEWS[tab](box, page.ctx); }
+  finally { if (box.isConnected) page.body.style.minHeight = ''; }
 }
 
 const TAB_VIEWS = {
@@ -503,14 +607,12 @@ const TAB_VIEWS = {
       replace(info, h('h2', { text: 'Состояние' }), facts([
         ['Состояние', stateBadge(d.lifecycle.state)],
         d.lifecycle.error && ['Ошибка', d.lifecycle.error],
-        ['Процесс', p.pid ? `PID ${p.pid}, запущен ${fmtTime(p.started_at)}` : '—'],
+        ['Процесс', p.pid ? `PID ${p.pid}, запущен ${fmtTime(p.started_at)}` : '-'],
         ['Доступность', h('span', {}, availabilityBadge(a), a.checked_at && isSet(a.checked_at) ? h('span', { class: 'muted small', text: '  проверено ' + fmtAgo(a.checked_at) }) : null)],
         a.last_error && ['Ошибка query', a.last_error],
-        ['Последний выход', hl.last_exit ? `${hl.last_exit.signal ? 'сигнал ' + hl.last_exit.signal : 'код ' + hl.last_exit.code}, ${fmtTime(hl.last_exit.at)}` : '—'],
-        ['Падений за 30 мин', String(hl.recent_crashes || 0)],
+        hl.recent_crashes > 0 && ['Падения', `${hl.recent_crashes} за 30 мин` + (hl.last_exit ? `, последнее ${fmtTime(hl.last_exit.at)} (${hl.last_exit.signal ? 'сигнал ' + hl.last_exit.signal : 'код ' + hl.last_exit.code})` : '')],
         hl.restart_pending && ['Автоперезапуск', fmtAgo(hl.restart_at)],
         hl.reason && ['Watchdog', hl.reason],
-        ['Желаемое состояние', s.desired_state === 'running' ? 'работает' : 'остановлен'],
         ['Порты', `игра ${s.game_port} (+1), query ${s.query_port}`],
         ['Каталог', h('span', { class: 'mono', text: s.install_dir })],
         ['Ветка', s.branch],
@@ -532,7 +634,7 @@ const TAB_VIEWS = {
           const u = await api('GET', `/servers/${enc(ctx.id)}/update`);
           replace(status, u.error ? h('span', { class: 'badge bad', text: 'Ошибка: ' + u.error })
             : h('span', {}, u.available ? h('span', { class: 'badge warn', text: 'Есть обновление' }) : h('span', { class: 'badge ok', text: 'Актуально' }),
-              `  установлена ${u.installed || '—'}, в Steam ${u.latest || '—'} (ветка ${u.branch})`));
+              `  установлена ${u.installed || '-'}, в Steam ${u.latest || '-'} (ветка ${u.branch})`));
         }) }),
         h('label', { class: 'row' }, warn, 'предупредить игроков'),
         h('label', { class: 'row' }, validate, 'проверить все файлы'),
@@ -628,16 +730,16 @@ const TAB_VIEWS = {
       let view;
       try { view = await api('GET', `/servers/${enc(ctx.id)}/config/${file}`); }
       catch (e) { replace(box, h('div', { class: 'notice bad', text: e.message })); return; }
-      const text = h('textarea', { class: 'mono', rows: 32, value: view.content, disabled: running, spellcheck: 'false' });
+      const text = h('textarea', { value: view.content, disabled: running, spellcheck: 'false', autocapitalize: 'off', autocomplete: 'off' });
       replace(box,
         h('div', { class: 'row', style: 'margin-bottom:12px' },
           ['ServerSettings', 'Game', 'Engine'].map(f => h('button', { class: f === file ? 'primary' : '', text: f + '.ini', onclick: () => { file = f; draw(); } }))),
         h('p', { class: 'muted small mono', text: view.path }),
-        running ? h('div', { class: 'notice', text: 'Сервер работает: править можно только после остановки. Игра читает файлы при старте и переписывает при остановке — правка на ходу потерялась бы.' }) : null,
+        running ? h('div', { class: 'notice', text: 'Сервер работает: править можно только после остановки. Игра читает файлы при старте и переписывает при остановке - правка на ходу потерялась бы.' }) : null,
         !view.exists ? h('div', { class: 'notice', text: 'Файла ещё нет: игра создаст его при первом запуске. Можно написать его заранее.' }) : null,
         view.managed && view.managed.length ? h('div', { class: 'notice', text: 'Менеджер переписывает перед стартом: ' + view.managed.join(', ') + '.' }) : null,
-        h('p', { class: 'muted small', text: 'Основные настройки удобнее менять во вкладке «Настройки» — там они собраны в форму. Здесь — всё остальное.' }),
-        h('div', { class: 'panel' }, text, h('div', { class: 'row end', style: 'margin-top:8px' },
+        h('p', { class: 'muted small', text: 'Основные настройки удобнее менять во вкладке «Настройки» - там они собраны в форму. Здесь - всё остальное.' }),
+        h('div', { class: 'panel' }, iniEditor(text), h('div', { class: 'row end', style: 'margin-top:10px' },
           h('button', { class: 'primary', text: 'Сохранить файл', disabled: running, onclick: e => act(e.target, async () => {
             await api('PUT', `/servers/${enc(ctx.id)}/config/${file}`, { content: text.value });
             toast('Сохранено'); draw();
@@ -692,7 +794,7 @@ const TAB_VIEWS = {
           await runJob(await api('POST', `/servers/${enc(ctx.id)}/backup`, { reason: reason.value.trim() || 'manual' }));
           draw();
         }) })),
-      h('p', { class: 'muted small', text: 'Копия снимается с работающего сервера без остановки. Восстановление — только на остановленном. Бэкап также делается перед каждым обновлением.' }),
+      h('p', { class: 'muted small', text: 'Копия снимается с работающего сервера без остановки. Восстановление - только на остановленном. Бэкап также делается перед каждым обновлением.' }),
       box));
     await draw();
   },
@@ -731,7 +833,7 @@ const TAB_VIEWS = {
       const enabled = h('input', { type: 'checkbox', checked: current ? current.enabled && !custom : false });
       const first = h('input', { type: 'time', value: simple ? `${pad(simple.first)}:${pad(simple.minute)}` : '06:00' });
       const perDay = h('select', {}, PER_DAY.map(n => h('option', { value: n, selected: simple ? simple.perDay === n : n === 1,
-        text: n === 1 ? '1 — раз в сутки' : `${n} — каждые ${24 / n} ч` })));
+        text: n === 1 ? '1 - раз в сутки' : `${n} - каждые ${24 / n} ч` })));
       const zone = h('input', { list: 'zones', value: current && current.timezone && current.timezone !== 'UTC' ? current.timezone : localZone });
       const minUptime = h('input', { type: 'time', value: `${pad(Math.floor((s.restart_min_uptime_seconds || 0) / 3600))}:${pad(Math.floor((s.restart_min_uptime_seconds || 0) % 3600 / 60))}` });
       const preview = h('p', { class: 'notice' });
@@ -767,7 +869,7 @@ const TAB_VIEWS = {
       const cronZone = h('input', { list: 'zones', value: current && current.timezone ? current.timezone : localZone });
       const advanced = h('details', { open: custom },
         h('summary', { text: 'Своё расписание (cron)' }),
-        h('p', { class: 'muted small', text: 'Для случаев, которые форма выше не покрывает: например, остановка на ночь и запуск утром (для этого нужны два расписания — сейчас на сервер одно). Формат: минута час день месяц день-недели; 0 — воскресенье. Пример: «30 4 * * 1» — по понедельникам в 04:30.' }),
+        h('p', { class: 'muted small', text: 'Для случаев, которые форма выше не покрывает: например, остановка на ночь и запуск утром (для этого нужны два расписания - сейчас на сервер одно). Формат: минута час день месяц день-недели; 0 - воскресенье. Пример: «30 4 * * 1» - по понедельникам в 04:30.' }),
         custom ? h('div', { class: 'notice', text: `Сейчас задано своё расписание: ${current.mode === 'cron' ? current.cron_expression + ' (' + current.timezone + ')' : current.mode === 'daily' ? 'ежедневно в ' + current.daily_time + ' UTC' : 'каждые ' + Math.round(current.interval_seconds / 60) + ' мин'}, действие «${current.action}».` }) : null,
         h('div', { class: 'form' }, field('Действие', action), field('Cron', cron), field('Часовой пояс', cronZone)),
         h('div', { class: 'row end' }, h('button', { text: 'Сохранить своё расписание', onclick: e => act(e.target, async () => {
@@ -782,13 +884,13 @@ const TAB_VIEWS = {
             current.failure_count ? h('span', { class: 'badge bad', style: 'margin-left:8px', text: 'ошибок подряд: ' + current.failure_count }) : null) : null,
           h('div', { class: 'form' },
             field('Рестарт каждый день', enabled),
-            field('Первый рестарт в', first, 'Остальные — через равные промежутки от этого времени.'),
+            field('Первый рестарт в', first, 'Остальные - через равные промежутки от этого времени.'),
             field('Рестартов в сутки', perDay),
             field('Часовой пояс', zone),
-            field('Минимальный аптайм (чч:мм)', minUptime, 'Если сервер запущен недавно (вручную или после падения), плановый рестарт пропускается. 00:00 — не проверять.')),
+            field('Минимальный аптайм (чч:мм)', minUptime, 'Если сервер запущен недавно (вручную или после падения), плановый рестарт пропускается. 00:00 - не проверять.')),
           preview,
           h('p', { class: 'muted small' }, warnings
-            ? `Перед рестартом игроки получат предупреждения за ${s.warnings.steps.map(x => x.minutes).sort((a, b) => b - a).join(', ')} мин. — если кто-то онлайн. `
+            ? `Перед рестартом игроки получат предупреждения за ${s.warnings.steps.map(x => x.minutes).sort((a, b) => b - a).join(', ')} мин. - если кто-то онлайн. `
             : 'Предупреждения игрокам не настроены. ', h('a', { href: `#/server/${enc(s.id)}/settings`, text: 'Настроить' })),
           h('div', { class: 'row end' }, save)),
         h('div', { class: 'panel' }, advanced));
@@ -853,7 +955,7 @@ const TAB_VIEWS = {
     const warnBody = h('div', { style: w ? '' : 'display:none' }, stepsBox,
       h('div', { class: 'row', style: 'margin:6px 0 12px' }, h('button', { text: '+ Шаг', onclick: () => addStep(1, DEFAULT_WARNING_TEXT) })),
       h('div', { class: 'form' }, field('RCON-команда объявления', warnCommand, 'У Conan это broadcast.')),
-      h('p', { class: 'muted small', text: '{minutes} заменяется числом минут, {action} — словом «перезапущен», «остановлен» или «обновлён».' }));
+      h('p', { class: 'muted small', text: '{minutes} заменяется числом минут, {action} - словом «перезапущен», «остановлен» или «обновлён».' }));
     warnOn.onchange = () => { warnBody.style.display = warnOn.checked ? '' : 'none'; };
 
     // ----- Discord texts -----
@@ -905,7 +1007,7 @@ const TAB_VIEWS = {
         h('label', { class: 'row' }, backups, 'удалить бэкапы менеджера'),
         confirmId] });
       if (!ok) return;
-      if (confirmId.value.trim() !== s.id) { toast('ID не совпал — удаление отменено', 'bad'); return; }
+      if (confirmId.value.trim() !== s.id) { toast('ID не совпал - удаление отменено', 'bad'); return; }
       await api('DELETE', `/servers/${enc(s.id)}?files=${files.checked}&backups=${backups.checked}`);
       toast('Сервер удалён'); location.hash = '#/';
     }) });
@@ -918,7 +1020,7 @@ const TAB_VIEWS = {
           field('Название в менеджере', inputs.name),
           field('Перезапускать при падении', inputs.restart_on_crash, 'До 3 раз за 30 минут, затем сервер остаётся выключенным и приходит уведомление.'),
           field('Проверка на зомби', h('div', { class: 'row' }, zombieOn, zombieMinutes, h('span', { class: 'muted', text: 'мин. без ответа' })),
-            'Если процесс жив, но не отвечает на запросы Steam столько минут после загрузки — сервер останавливается (с проверкой базы) и запускается снова.'),
+            'Если процесс жив, но не отвечает на запросы Steam столько минут после загрузки - сервер останавливается (с проверкой базы) и запускается снова.'),
           field('Автообновление', inputs.auto_update, 'Новая сборка ставится сразу после выхода, с предупреждением игроков и бэкапом.'),
           field('Бэкап при остановке', inputs.backup_on_stop, 'Копия мира в бэкапы менеджера после каждой нормальной остановки.'))),
       h('div', { class: 'panel' }, h('h2', { text: 'Запуск' }),
@@ -927,16 +1029,16 @@ const TAB_VIEWS = {
           field('Карта', h('div', { class: 'row' }, mapSelect, mapPath)),
           field('Игровой порт', inputs.game_port, 'Игра занимает этот порт и следующий (Raw UDP).'),
           field('Query-порт', inputs.query_port),
-          field('Multihome (IP)', inputs.multihome, 'Пусто — слушать все адреса.'),
+          field('Multihome (IP)', inputs.multihome, 'Пусто - слушать все адреса.'),
           field('Ветка Steam', inputs.branch),
           field('Доп. аргументы запуска', inputs.launch_args, 'Порты, карта и multihome передаются автоматически.'),
-          field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 — как в игре. Пишется в Game.ini перед стартом; каждый бэкап копирует базу целиком.'))),
+          field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 - как в игре. Пишется в Game.ini перед стартом; каждый бэкап копирует базу целиком.'))),
       gameBox,
       h('div', { class: 'panel' }, h('h2', { text: 'Предупреждения игрокам (RCON)' }),
-        h('p', { class: 'muted small', text: 'Перед плановым рестартом или остановкой, автообновлением и рестартом с галочкой «предупредить». Если на сервере никого нет — действие сразу, без ожидания. Нужен включённый RCON (раздел выше).' }),
+        h('p', { class: 'muted small', text: 'Перед плановым рестартом или остановкой, автообновлением и рестартом с галочкой «предупредить». Если на сервере никого нет - действие сразу, без ожидания. Нужен включённый RCON (раздел выше).' }),
         h('div', { class: 'form' }, field('Предупреждать игроков', warnOn)), warnBody),
       h('div', { class: 'panel' }, h('h2', { text: 'Тексты для Discord' }),
-        h('p', { class: 'muted small' }, 'Добавляются к стандартному уведомлению этого сервера. Пусто — только стандартный заголовок. Куда слать — на странице ', h('a', { href: '#/notifications', text: 'Уведомления' }), '.'),
+        h('p', { class: 'muted small' }, 'Добавляются к стандартному уведомлению этого сервера. Пусто - только стандартный заголовок. Куда слать - на странице ', h('a', { href: '#/notifications', text: 'Уведомления' }), '.'),
         h('div', { class: 'form' },
           field('Сервер готов', discord.ready), field('Сервер перезапущен', discord.restarted), field('Сервер остановлен', discord.stopped))),
       h('div', { class: 'panel' }, h('h2', { text: 'Скрипты (хуки)' }), hooksHelp(hooksInfo), datalist,
@@ -974,70 +1076,247 @@ const TAB_VIEWS = {
 
 // ---------- notifications ----------
 
+// Ready-made event sets for a channel; the form ticks the matching events.
+const EVENT_PRESETS = [
+  ['problems', 'Только проблемы', 'Падения, зависания, повреждённая база, ошибки обновлений и бэкапов.', e => e.severity === 'error'],
+  ['important', 'Проблемы и предупреждения', 'Плюс перезапуски после падения, недоступность, найденное обновление.', e => e.severity !== 'info'],
+  ['players', 'Для игроков', 'Сервер готов, перезапущен, остановлен, обновление установлено - без технических подробностей.',
+    e => ['server.ready', 'server.restarted', 'server.stopped', 'update.finished', 'backup.restored'].includes(e.type)],
+  ['all', 'Всё', 'Каждое событие, включая бэкапы и изменения настроек.', () => true],
+];
+
+// channelEvents is what a stored channel actually receives: channels from
+// before the event list keep a level and no list.
+function channelEvents(c, catalog) {
+  const rank = { info: 0, warning: 1, error: 2 };
+  const min = rank[c.min_severity] || 0;
+  const listed = c.event_types && c.event_types.length ? new Set(c.event_types) : null;
+  return catalog.filter(e => rank[e.severity] >= min && (listed ? listed.has(e.type) : e.type !== 'server.started')).map(e => e.type);
+}
+
 async function viewNotifications() {
   const listBox = h('div');
   const formBox = h('div');
-  let servers = [];
-  try { servers = await api('GET', '/servers'); } catch { servers = []; }
+  let servers = [], catalog = [];
+  try { [servers, catalog] = await Promise.all([api('GET', '/servers'), api('GET', '/notification-events')]); } catch (e) { toast(e.message, 'bad'); }
+  const serverName = id => (servers.find(s => s.id === id) || {}).name || id;
+  const titleOf = type => (catalog.find(e => e.type === type) || {}).title || type;
+
   const draw = async () => {
     let channels = [];
     try { channels = await api('GET', '/notifications'); } catch (e) { replace(listBox, h('div', { class: 'notice bad', text: e.message })); return; }
-    replace(listBox, table(['Канал', 'Серверы', 'Уровень', 'Язык', 'Состояние', ''], channels.map(c => [
-      h('span', {}, h('strong', { text: c.name }), h('div', { class: 'muted small mono', text: c.webhook })),
-      c.server_id || 'все',
-      (SEVERITY[c.min_severity] || [c.min_severity])[0] + (c.event_types && c.event_types.length ? ` + ${c.event_types.length} событий` : ''),
-      c.language,
-      h('span', {}, c.enabled ? h('span', { class: 'badge ok', text: 'включён' }) : h('span', { class: 'badge', text: 'выключен' }),
-        c.last_error ? h('div', { class: 'small', style: 'color:var(--bad)', text: c.last_error }) : c.last_sent_at ? h('div', { class: 'muted small', text: 'отправлено ' + fmtAgo(c.last_sent_at) }) : null),
-      h('div', { class: 'row' },
-        h('button', { text: 'Тест', onclick: e => act(e.target, async () => { await api('POST', `/notifications/${enc(c.id)}/test`); toast('Тестовое сообщение отправлено'); draw(); }) }),
-        h('button', { text: 'Изменить', onclick: () => showForm(c) }),
-        h('button', { class: 'danger', text: 'Удалить', onclick: e => act(e.target, async () => {
-          if (!await ask(`Удалить канал «${c.name}»?`, { ok: 'Удалить' })) return;
-          await api('DELETE', `/notifications/${enc(c.id)}`); toast('Удалено'); draw();
-        }) })),
-    ]), 'Каналов нет'));
+    if (!channels.length) {
+      replace(listBox, h('div', { class: 'panel' }, h('p', { class: 'muted', text: 'Каналов пока нет. Добавьте первый - это вебхук Discord-канала, куда менеджер будет писать.' })));
+      return;
+    }
+    replace(listBox, h('div', { class: 'grid' }, channels.map(c => {
+      const types = channelEvents(c, catalog);
+      const preset = EVENT_PRESETS.find(([, , , fn]) => { const want = catalog.filter(fn).map(e => e.type); return want.length === types.length && want.every(t => types.includes(t)); });
+      return h('div', { class: 'card' },
+        h('div', { class: 'title' }, h('strong', { text: c.name }), h('span', { class: 'spacer' }),
+          c.enabled ? h('span', { class: 'badge ok', text: 'включён' }) : h('span', { class: 'badge', text: 'выключен' })),
+        facts([
+          ['Серверы', c.server_id ? serverName(c.server_id) : 'все'],
+          ['Присылает', h('span', { title: types.map(titleOf).join('\n') }, preset ? preset[1] : `${types.length} событий`, ' ', h('span', { class: 'help', text: '?' }))],
+          ['Упоминание', c.mention ? h('span', { class: 'mono', text: c.mention }) : 'нет'],
+          ['Вебхук', h('span', { class: 'mono small', text: c.webhook })],
+          ['Последняя отправка', c.last_error ? h('span', { class: 'small', style: 'color:var(--bad)', text: c.last_error }) : c.last_sent_at ? fmtAgo(c.last_sent_at) + ' назад' : 'ещё не было'],
+        ]),
+        h('div', { class: 'row' },
+          h('button', { text: 'Отправить тест', onclick: e => act(e.target, async () => { await api('POST', `/notifications/${enc(c.id)}/test`); toast('Тестовое сообщение отправлено - проверьте канал в Discord'); draw(); }) }),
+          h('button', { text: 'Изменить', onclick: () => showForm(c) }),
+          h('span', { class: 'spacer' }),
+          h('button', { class: 'danger', text: 'Удалить', onclick: e => act(e.target, async () => {
+            if (!await ask(`Удалить канал «${c.name}»?`, { ok: 'Удалить' })) return;
+            await api('DELETE', `/notifications/${enc(c.id)}`); toast('Удалено'); draw();
+          }) })));
+    })));
   };
+
   const showForm = channel => {
-    const c = channel || { enabled: true, language: 'ru', min_severity: 'warning', event_types: [] };
-    const name = h('input', { value: c.name || '', placeholder: 'Админы' });
-    const url = h('input', { placeholder: channel ? 'оставьте пустым, чтобы не менять' : 'https://discord.com/api/webhooks/…', autocomplete: 'off' });
+    const c = channel || { enabled: true, language: 'ru', min_severity: 'info', event_types: [] };
+    const name = h('input', { value: c.name || 'Discord', autocomplete: 'off' });
+    const url = h('input', { class: 'mono', placeholder: channel ? 'оставьте пустым, чтобы не менять' : 'https://discord.com/api/webhooks/...', autocomplete: 'off' });
     const server = h('select', {}, h('option', { value: '', text: 'Все серверы' }), servers.map(s => h('option', { value: s.id, text: s.name, selected: c.server_id === s.id })));
-    const severity = h('select', {}, [['info', 'Всё (инфо и выше)'], ['warning', 'Предупреждения и ошибки'], ['error', 'Только ошибки']].map(([v, t]) => h('option', { value: v, text: t, selected: c.min_severity === v })));
-    const types = h('input', { class: 'mono', value: (c.event_types || []).join(', '), placeholder: 'server.ready, backup.finished' });
     const language = h('select', {}, [['ru', 'Русский'], ['en', 'English']].map(([v, t]) => h('option', { value: v, text: t, selected: c.language === v })));
-    const mention = h('input', { value: c.mention || '', placeholder: '<@&ID роли> — только для ошибок' });
+    const mention = h('input', { class: 'mono', value: c.mention || '', placeholder: '<@&123456789012345678>' });
     const enabled = h('input', { type: 'checkbox', checked: c.enabled });
-    replace(formBox, h('div', { class: 'panel' }, h('h2', { text: channel ? 'Изменить канал' : 'Новый канал Discord' }),
+
+    // Event checklist with presets above it.
+    const boxes = {};
+    const selected = new Set(channel ? channelEvents(c, catalog) : catalog.filter(EVENT_PRESETS[1][3]).map(e => e.type));
+    const presetButtons = EVENT_PRESETS.map(([key, label, hint, fn]) => h('button', { text: label, title: hint, 'data-preset': key, onclick: () => {
+      for (const e of catalog) boxes[e.type].checked = fn(e);
+      markPreset();
+    } }));
+    const markPreset = () => {
+      const on = catalog.filter(e => boxes[e.type].checked).map(e => e.type);
+      for (const b of presetButtons) {
+        const fn = EVENT_PRESETS.find(p => p[0] === b.dataset.preset)[3];
+        const want = catalog.filter(fn).map(e => e.type);
+        b.className = want.length === on.length && want.every(t => on.includes(t)) ? 'primary' : '';
+      }
+    };
+    const groups = [];
+    for (const e of catalog) {
+      let g = groups.find(x => x.name === e.group);
+      if (!g) groups.push(g = { name: e.group, items: [] });
+      const box = boxes[e.type] = h('input', { type: 'checkbox', checked: selected.has(e.type), onchange: markPreset });
+      g.items.push(h('label', { class: 'row event-item' }, box, h('span', { text: e.title }),
+        e.severity === 'error' ? h('span', { class: 'badge bad plain', text: 'ошибка' }) : e.severity === 'warning' ? h('span', { class: 'badge warn plain', text: 'внимание' }) : null));
+    }
+    const eventsBox = h('div', { class: 'event-groups' }, groups.map(g => h('div', { class: 'event-group' },
+      h('h3', { text: g.name }), g.items)));
+    markPreset();
+
+    replace(formBox, h('div', { class: 'panel' }, h('h2', { text: channel ? `Канал «${c.name}»` : 'Новый канал Discord' }),
+      h('h3', { text: '1. Куда писать' }),
       h('div', { class: 'form' },
-        field('Название', name), field('Webhook URL', url, 'Хранится зашифрованным и в ответах маскируется.'),
-        field('Сервер', server), field('Уровень', severity),
-        field('Дополнительные события', types, 'Эти типы приходят независимо от уровня. Через запятую.'),
-        field('Язык', language), field('Упоминание', mention), field('Включён', enabled)),
-      h('div', { class: 'row end' },
+        field('Webhook URL', url, 'В Discord: настройки канала → Интеграции → Вебхуки → Новый вебхук → «Копировать URL веб-хука».\nАдрес хранится зашифрованным и дальше показывается замаскированным.'),
+        field('Название', name, 'Для себя: чтобы отличать каналы в этом списке.'),
+        field('Серверы', server, 'От каких серверов присылать события.')),
+      h('h3', { text: '2. Что присылать' }),
+      h('div', { class: 'row', style: 'margin-bottom:12px' }, presetButtons),
+      eventsBox,
+      h('h3', { text: '3. Оформление' }),
+      h('div', { class: 'form' },
+        field('Упоминание при ошибке', mention, 'Кого позвать, когда случилась ошибка (падение, повреждённая база...). К остальным событиям упоминание не ставится.\nРоль: <@&ID роли>, человек: <@ID>, или @here.\nID роли: Discord → Настройки сервера → Роли → ПКМ по роли → «Копировать ID» (нужен режим разработчика).'),
+        field('Язык сообщений', language),
+        field('Включён', enabled)),
+      h('div', { class: 'row end', style: 'margin-top:14px' },
         h('button', { class: 'ghost', text: 'Отмена', onclick: () => replace(formBox) }),
-        h('button', { class: 'primary', text: 'Сохранить', onclick: e => act(e.target, async () => {
-          const body = { name: name.value.trim(), server_id: server.value, min_severity: severity.value,
-            event_types: types.value.split(',').map(x => x.trim()).filter(Boolean), language: language.value, mention: mention.value.trim(), enabled: enabled.checked };
+        h('button', { class: 'primary', text: channel ? 'Сохранить' : 'Добавить канал', onclick: e => act(e.target, async () => {
+          const types = catalog.filter(x => boxes[x.type].checked).map(x => x.type);
+          if (!types.length) throw new Error('Выберите хотя бы одно событие');
+          const body = { name: name.value.trim(), server_id: server.value, min_severity: 'info', event_types: types,
+            language: language.value, mention: mention.value.trim(), enabled: enabled.checked };
           if (url.value.trim()) body.webhook_url = url.value.trim();
-          if (channel) await api('PATCH', `/notifications/${enc(channel.id)}`, body);
-          else await api('POST', '/notifications', body);
-          toast('Сохранено'); replace(formBox); draw();
+          const saved = channel ? await api('PATCH', `/notifications/${enc(channel.id)}`, body) : await api('POST', '/notifications', body);
+          replace(formBox); await draw();
+          if (!channel && saved && saved.id && await ask('Канал добавлен. Отправить тестовое сообщение, чтобы проверить?', { ok: 'Отправить', danger: false })) {
+            await api('POST', `/notifications/${enc(saved.id)}/test`); toast('Тестовое сообщение отправлено - проверьте канал в Discord'); draw();
+          } else toast('Сохранено');
         }) }))));
-    name.focus();
+    formBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    (channel ? name : url).focus();
   };
+
   replace(app,
     h('div', { class: 'head' }, h('h1', { text: 'Уведомления' }),
       h('button', { class: 'primary', text: '+ Добавить канал', onclick: () => showForm(null) })),
-    formBox, h('div', { class: 'panel' }, listBox),
-    h('div', { class: 'panel' }, h('h2', { text: 'Как настроить' }), h('ol', { class: 'small' },
-      h('li', {}, 'В Discord: настройки канала → Интеграции → Вебхуки → Новый вебхук → «Копировать URL».'),
-      h('li', {}, 'Здесь: «Добавить канал», вставьте URL. Выберите сервер (или все) и уровень: «Предупреждения и ошибки» — падения, зависания, ошибки бэкапов и обновлений, повреждённая база; «Всё» — ещё запуски, остановки, готовность, бэкапы.'),
-      h('li', {}, 'Нужны отдельные события при уровне «только ошибки» — впишите их в «Дополнительные события», например server.ready, server.restarted.'),
-      h('li', {}, 'Упоминание (<@&ID роли>, @here) ставится только к ошибкам, чтобы не будить людей из-за обычных рестартов.'),
-      h('li', {}, 'Нажмите «Тест». Ошибка отправки показывается в списке каналов. Если хост не видит Discord (блокировка), укажите прокси в CONAN_MANAGER_NOTIFY_PROXY.'),
-      h('li', {}, 'Свои тексты «Сервер готов / перезапущен / остановлен» задаются у каждого сервера во вкладке «Настройки». Предупреждения игрокам в игре — там же, раздел RCON.'))));
+    h('p', { class: 'muted small' }, 'Менеджер пишет в Discord через вебхуки: один вебхук - один канал. Можно завести несколько: например, «Проблемы» для админов с упоминанием роли и «Для игроков» в общий канал. Свои тексты «Сервер готов / перезапущен / остановлен» задаются у каждого сервера во вкладке «Настройки». Если хост не видит Discord, укажите прокси на странице ', h('a', { href: '#/panel', text: 'Панель' }), '.'),
+    formBox, listBox);
   await draw();
+}
+
+// ---------- manager panel: administrators and settings ----------
+
+const SOURCE = { panel: ['из панели', 'info'], env: ['из файла окружения', 'plain'], default: ['по умолчанию', 'plain'] };
+
+async function viewPanel() {
+  const adminsBox = h('div');
+  const settingsBox = h('div');
+  replace(app, h('div', { class: 'head' }, h('h1', { text: 'Панель' })), adminsBox, settingsBox);
+
+  const passwordInput = () => h('input', { type: 'password', autocomplete: 'new-password', minlength: 10, placeholder: 'не короче 10 символов' });
+
+  const drawAdmins = async () => {
+    const list = await api('GET', '/admins');
+    const username = h('input', { autocomplete: 'off', pattern: '[A-Za-z0-9][A-Za-z0-9._-]{1,31}' });
+    const password = passwordInput();
+    const show = h('input', { type: 'checkbox' });
+    show.onchange = () => { password.type = show.checked ? 'text' : 'password'; };
+    replace(adminsBox, h('div', { class: 'panel' }, h('h2', { text: 'Администраторы' }),
+      h('p', { class: 'muted small', text: 'У всех администраторов одинаковые права. Основной задан в файле окружения, его пароль меняется только там.' }),
+      table(['Логин', 'Откуда', 'Добавлен', 'Пароль изменён', ''], list.map(a => [
+        h('strong', { text: a.username }),
+        a.builtin ? h('span', { class: 'badge plain', text: 'файл окружения' }) : h('span', { class: 'badge info plain', text: 'панель' }),
+        a.builtin ? '-' : fmtTime(a.created_at), a.builtin ? '-' : fmtTime(a.password_changed_at),
+        a.builtin ? h('span', { class: 'muted small', text: 'CONAN_MANAGER_ADMIN_PASSWORD' }) : h('div', { class: 'row end' },
+          h('button', { text: 'Сменить пароль', onclick: e => act(e.target, async () => {
+            const input = passwordInput();
+            if (!await ask(`Новый пароль для ${a.username}:`, { ok: 'Сменить', danger: false, extra: [input] })) return;
+            await api('PUT', `/admins/${enc(a.username)}/password`, { password: input.value });
+            toast('Пароль изменён'); drawAdmins();
+          }) }),
+          h('button', { class: 'danger', text: 'Удалить', onclick: e => act(e.target, async () => {
+            if (!await ask(`Удалить администратора ${a.username}? Он сразу потеряет доступ.`, { ok: 'Удалить' })) return;
+            await api('DELETE', `/admins/${enc(a.username)}`);
+            toast('Администратор удалён'); drawAdmins();
+          }) }))])),
+      h('h3', { text: 'Добавить администратора' }),
+      h('div', { class: 'form' },
+        field('Логин', username, 'Латиница, цифры, точка, дефис, подчёркивание; 2-32 символа.'),
+        field('Пароль', password, 'Не короче 10 символов. Хранится как хеш PBKDF2, восстановить его нельзя - только задать новый.'),
+        field('Показать пароль', show)),
+      h('div', { class: 'row end', style: 'margin-top:10px' },
+        h('button', { class: 'primary', text: '+ Добавить', onclick: e => act(e.target, async () => {
+          await api('POST', '/admins', { username: username.value.trim(), password: password.value });
+          toast('Администратор добавлен'); drawAdmins();
+        }) }))));
+  };
+
+  const drawSettings = async data => {
+    data = data || await api('GET', '/panel/settings');
+    const inputs = {};
+    const groups = [];
+    for (const s of data.settings) {
+      let group = groups.find(g => g.name === s.group);
+      if (!group) groups.push(group = { name: s.group, rows: [] });
+      const input = s.kind === 'bool'
+        ? h('input', { type: 'checkbox', checked: /^(1|true|yes|on)$/i.test(s.value) })
+        : h('input', { class: ['path', 'proxy', 'origin'].includes(s.kind) ? 'mono' : '', value: s.value, autocomplete: 'off',
+            placeholder: s.kind === 'proxy' ? 'socks5://host:1080' : s.kind === 'origin' ? 'https://manager.example.com' : '' });
+      inputs[s.key] = { s, input };
+      const help = s.help + '\n\nПеременная: ' + s.key + (s.default ? '\nПо умолчанию: ' + s.default : '') +
+        (s.env ? '\nВ файле окружения: ' + s.env : '') + (s.live ? '\nПрименяется сразу.' : '\nПрименяется после перезапуска менеджера.');
+      const meta = h('div', { class: 'setting-meta' },
+        h('span', { class: 'badge plain ' + SOURCE[s.source][1], text: SOURCE[s.source][0] }),
+        !s.live && s.value !== s.active ? h('span', { class: 'badge warn', text: 'сейчас: ' + (s.active || 'пусто') }) : null,
+        s.source === 'panel' ? h('button', { class: 'ghost small', text: 'Сбросить', title: s.env ? 'Вернуть значение из файла окружения: ' + s.env : 'Вернуть значение по умолчанию', onclick: e => act(e.target, async () => {
+          toast('Сброшено'); drawSettings(await api('PUT', '/panel/settings', { [s.key]: null }));
+        }) }) : null);
+      group.rows.push(field(s.label, h('div', {}, input, meta), help));
+    }
+    const restart = h('button', { class: data.restart_pending ? 'primary' : '', text: 'Перезапустить менеджер', disabled: !data.can_restart, onclick: e => act(e.target, async () => {
+      if (!await ask('Перезапустить менеджер? Серверы продолжат работать, страница переподключится через несколько секунд.', { ok: 'Перезапустить', danger: false })) return;
+      await api('POST', '/panel/restart');
+      toast('Менеджер перезапускается…', 'info');
+      await waitForManager(new Date(data.started_at).getTime());
+      toast('Менеджер снова в строю'); drawSettings();
+    }) });
+    replace(settingsBox, h('div', { class: 'panel' }, h('h2', { text: 'Настройки менеджера' }),
+      h('p', { class: 'muted small', text: 'Значение из панели главнее файла окружения. «Сбросить» возвращает значение из файла. Адрес, база, основной администратор, ключ шифрования и папка скриптов меняются только в /etc/conan-manager/conan-manager.env.' }),
+      data.restart_pending ? h('div', { class: 'notice' }, 'Часть изменений применится после перезапуска менеджера. Серверы при этом не останавливаются.') : null,
+      groups.map(g => [h('h3', { text: g.name }), h('div', { class: 'form' }, g.rows)]),
+      h('div', { class: 'row', style: 'margin-top:14px' }, restart,
+        data.can_restart ? null : h('span', { class: 'muted small', text: 'Менеджер запущен не как служба systemd - перезапустите его вручную.' }),
+        h('span', { class: 'spacer' }),
+        h('button', { class: 'primary', text: 'Сохранить', onclick: e => act(e.target, async () => {
+          const patch = {};
+          for (const [key, { s, input }] of Object.entries(inputs)) {
+            const value = s.kind === 'bool' ? String(input.checked) : input.value.trim();
+            const current = s.kind === 'bool' ? String(/^(1|true|yes|on)$/i.test(s.value)) : s.value;
+            if (value !== current) patch[key] = value;
+          }
+          if (!Object.keys(patch).length) { toast('Изменений нет', 'info'); return; }
+          toast('Сохранено'); drawSettings(await api('PUT', '/panel/settings', patch));
+        }) }))));
+  };
+
+  await Promise.all([drawAdmins(), drawSettings()]);
+}
+
+// waitForManager polls until a manager started after `since` answers.
+async function waitForManager(since) {
+  for (let i = 0; i < 60; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const data = await api('GET', '/panel/settings');
+      if (new Date(data.started_at).getTime() > since) return;
+    } catch { /* still restarting */ }
+  }
+  throw new Error('менеджер не ответил за 2 минуты - проверьте journalctl -u conan-manager');
 }
 
 // ---------- routing ----------
@@ -1047,7 +1326,7 @@ async function render() {
   leaving = [];
   const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   const section = parts[0] || '';
-  const nav = section === 'events' ? 'events' : section === 'notifications' ? 'notifications' : 'servers';
+  const nav = ['events', 'notifications', 'panel'].includes(section) ? section : 'servers';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === nav));
   try {
     if (section === '') await viewServers();
@@ -1055,6 +1334,7 @@ async function render() {
     else if (section === 'server' && parts[1]) await viewServer(parts[1], parts[2]);
     else if (section === 'events') await viewEvents();
     else if (section === 'notifications') await viewNotifications();
+    else if (section === 'panel') await viewPanel();
     else replace(app, h('p', {}, 'Страница не найдена. ', h('a', { href: '#/', text: 'К серверам' })));
   } catch (e) {
     replace(app, h('div', { class: 'notice bad', text: 'Ошибка: ' + e.message }));
@@ -1063,3 +1343,4 @@ async function render() {
 
 window.addEventListener('hashchange', render);
 render();
+api('GET', '/me').then(me => { document.getElementById('who').textContent = me.username; }).catch(() => {});

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/example/conan-manager/internal/events"
@@ -16,6 +17,8 @@ import (
 type Dispatcher struct {
 	Repo   *Repository
 	Logger *slog.Logger
+
+	mu     sync.RWMutex
 	sender sender
 }
 
@@ -29,9 +32,13 @@ func NewDispatcher(repo *Repository, logger *slog.Logger) *Dispatcher {
 
 // UseProxy sends notifications through a proxy: http://, https:// or
 // socks5://, with credentials in the URL if the proxy needs them. Where the
-// host cannot reach Discord directly, this is the only way out.
+// host cannot reach Discord directly, this is the only way out. An empty
+// value goes back to sending directly. It may be called while events flow.
 func (d *Dispatcher) UseProxy(raw string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	if raw == "" {
+		d.sender.client = &http.Client{Timeout: d.sender.client.Timeout}
 		return nil
 	}
 	proxy, err := url.Parse(raw)
@@ -67,7 +74,7 @@ func (d *Dispatcher) Handle(e events.Event) {
 		if !c.wants(e) {
 			continue
 		}
-		err := d.sender.send(ctx, c.webhook, format(e, c))
+		err := d.current().send(ctx, c.webhook, format(e, c))
 		d.Repo.markResult(ctx, c.ID, err)
 		if err != nil {
 			d.Logger.Warn("notification not delivered", "channel", c.Name, "event", e.Type, "error", err)
@@ -90,7 +97,13 @@ func (d *Dispatcher) Test(ctx context.Context, id string) error {
 		message = "Test notification: this channel works"
 	}
 	e := events.Event{Type: "manager.test", Severity: events.Info, Time: time.Now().UTC(), Message: "🔔 " + message}
-	err = d.sender.send(ctx, c.webhook, format(e, c))
+	err = d.current().send(ctx, c.webhook, format(e, c))
 	d.Repo.markResult(ctx, c.ID, err)
 	return err
+}
+
+func (d *Dispatcher) current() sender {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.sender
 }

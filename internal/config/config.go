@@ -55,40 +55,51 @@ type Config struct {
 }
 
 func Load() Config {
+	return LoadFrom(os.Getenv)
+}
+
+// LoadFrom reads the configuration through lookup, so settings the operator
+// saved in the panel can take the place of the environment.
+func LoadFrom(lookup func(string) string) Config {
+	r := reader(lookup)
 	return Config{
-		ListenAddress:       env("CONAN_MANAGER_LISTEN", "127.0.0.1:8080"),
-		DatabasePath:        env("CONAN_MANAGER_DATABASE", "/var/lib/conan-manager/manager.db"),
-		AdminUsername:       os.Getenv("CONAN_MANAGER_ADMIN_USERNAME"),
-		AdminPassword:       os.Getenv("CONAN_MANAGER_ADMIN_PASSWORD"),
-		AllowedOrigin:       os.Getenv("CONAN_MANAGER_ALLOWED_ORIGIN"),
-		SecretKey:           os.Getenv("CONAN_MANAGER_SECRET_KEY"),
-		LauncherIDs:         os.Getenv("CONAN_MANAGER_LAUNCHER_IDS"),
-		ExposeErrorDetail:   boolean("CONAN_MANAGER_EXPOSE_ERROR_DETAIL"),
-		ServerUnits:         boolean("CONAN_MANAGER_SERVER_UNITS"),
-		UnitDir:             env("CONAN_MANAGER_UNIT_DIR", "/var/lib/conan-manager/units"),
-		StopTimeout:         duration("CONAN_MANAGER_STOP_TIMEOUT", 5*time.Minute),
-		HooksDir:            env("CONAN_MANAGER_HOOKS_DIR", "/etc/conan-manager/hooks"),
-		HookTimeout:         duration("CONAN_MANAGER_HOOK_TIMEOUT", 5*time.Minute),
-		UpdateCheckInterval: updateInterval(),
-		BackupRetention:     integer("CONAN_MANAGER_BACKUP_RETENTION", 10),
-		BackupDir:           env("CONAN_MANAGER_BACKUP_DIR", "/var/lib/conan-manager/backups"),
-		BackupKeep:          integer("CONAN_MANAGER_BACKUP_KEEP", 20),
-		NotifyProxy:         env("CONAN_MANAGER_NOTIFY_PROXY", ""),
-		QueryHost:           env("CONAN_MANAGER_QUERY_HOST", "127.0.0.1"),
+		ListenAddress:       r.env("CONAN_MANAGER_LISTEN", "127.0.0.1:8080"),
+		DatabasePath:        r.env("CONAN_MANAGER_DATABASE", "/var/lib/conan-manager/manager.db"),
+		AdminUsername:       r.get("CONAN_MANAGER_ADMIN_USERNAME"),
+		AdminPassword:       r.get("CONAN_MANAGER_ADMIN_PASSWORD"),
+		AllowedOrigin:       r.get("CONAN_MANAGER_ALLOWED_ORIGIN"),
+		SecretKey:           r.get("CONAN_MANAGER_SECRET_KEY"),
+		LauncherIDs:         r.get("CONAN_MANAGER_LAUNCHER_IDS"),
+		ExposeErrorDetail:   r.boolean("CONAN_MANAGER_EXPOSE_ERROR_DETAIL"),
+		ServerUnits:         r.boolean("CONAN_MANAGER_SERVER_UNITS"),
+		UnitDir:             r.env("CONAN_MANAGER_UNIT_DIR", "/var/lib/conan-manager/units"),
+		StopTimeout:         r.duration("CONAN_MANAGER_STOP_TIMEOUT", 5*time.Minute),
+		HooksDir:            r.env("CONAN_MANAGER_HOOKS_DIR", "/etc/conan-manager/hooks"),
+		HookTimeout:         r.duration("CONAN_MANAGER_HOOK_TIMEOUT", 5*time.Minute),
+		UpdateCheckInterval: r.updateInterval(),
+		BackupRetention:     r.integer("CONAN_MANAGER_BACKUP_RETENTION", 10),
+		BackupDir:           r.env("CONAN_MANAGER_BACKUP_DIR", "/var/lib/conan-manager/backups"),
+		BackupKeep:          r.integer("CONAN_MANAGER_BACKUP_KEEP", 20),
+		NotifyProxy:         r.env("CONAN_MANAGER_NOTIFY_PROXY", ""),
+		QueryHost:           r.env("CONAN_MANAGER_QUERY_HOST", "127.0.0.1"),
 		Availability: watchdog.AvailabilityPolicy{
-			Interval:       duration("CONAN_MANAGER_QUERY_INTERVAL", 15*time.Second),
-			Timeout:        duration("CONAN_MANAGER_QUERY_TIMEOUT", 3*time.Second),
-			StartupGrace:   duration("CONAN_MANAGER_QUERY_STARTUP_GRACE", 10*time.Minute),
-			UnavailableFor: duration("CONAN_MANAGER_QUERY_UNAVAILABLE_FOR", 5*time.Minute),
+			Interval:       r.duration("CONAN_MANAGER_QUERY_INTERVAL", 15*time.Second),
+			Timeout:        r.duration("CONAN_MANAGER_QUERY_TIMEOUT", 3*time.Second),
+			StartupGrace:   r.duration("CONAN_MANAGER_QUERY_STARTUP_GRACE", 10*time.Minute),
+			UnavailableFor: r.duration("CONAN_MANAGER_QUERY_UNAVAILABLE_FOR", 5*time.Minute),
 		},
 	}
 }
 
-func updateInterval() time.Duration {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("CONAN_MANAGER_UPDATE_CHECK_INTERVAL")), "off") {
+type reader func(string) string
+
+func (r reader) get(name string) string { return r(name) }
+
+func (r reader) updateInterval() time.Duration {
+	if strings.EqualFold(strings.TrimSpace(r.get("CONAN_MANAGER_UPDATE_CHECK_INTERVAL")), "off") {
 		return 0
 	}
-	value := duration("CONAN_MANAGER_UPDATE_CHECK_INTERVAL", 30*time.Minute)
+	value := r.duration("CONAN_MANAGER_UPDATE_CHECK_INTERVAL", 30*time.Minute)
 	// Each check starts SteamCMD; more often than every five minutes buys
 	// nothing, since Steam's own app info refreshes no faster.
 	if value < 5*time.Minute {
@@ -97,31 +108,31 @@ func updateInterval() time.Duration {
 	return value
 }
 
-func boolean(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+func (r reader) boolean(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(r.get(name))) {
 	case "1", "true", "yes", "on":
 		return true
 	}
 	return false
 }
 
-func duration(name string, fallback time.Duration) time.Duration {
-	value, err := time.ParseDuration(os.Getenv(name))
+func (r reader) duration(name string, fallback time.Duration) time.Duration {
+	value, err := time.ParseDuration(r.get(name))
 	if err != nil || value < time.Second {
 		return fallback
 	}
 	return value
 }
 
-func env(name, fallback string) string {
-	if value := os.Getenv(name); value != "" {
+func (r reader) env(name, fallback string) string {
+	if value := r.get(name); value != "" {
 		return value
 	}
 	return fallback
 }
 
-func integer(name string, fallback int) int {
-	value, err := strconv.Atoi(os.Getenv(name))
+func (r reader) integer(name string, fallback int) int {
+	value, err := strconv.Atoi(r.get(name))
 	if err != nil || value < 1 {
 		return fallback
 	}

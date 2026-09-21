@@ -186,6 +186,17 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_runs_server_started
     ON scheduler_runs(server_id, started_at DESC);
 
 CREATE TABLE IF NOT EXISTS manager_migrations (name TEXT PRIMARY KEY);
+CREATE TABLE IF NOT EXISTS panel_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admins (
+    username TEXT PRIMARY KEY,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    password_changed_at TEXT NOT NULL
+);
 `
 
 // step is one schema upgrade. needed inspects the live schema instead of trusting

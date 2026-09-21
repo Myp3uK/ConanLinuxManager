@@ -158,6 +158,9 @@ func (b *Bus) Dropped() map[string]int64 {
 	return result
 }
 
+// SeverityOf is the severity an event of this type carries by default.
+func SeverityOf(t Type) Severity { return defaultSeverity(t) }
+
 func defaultSeverity(t Type) Severity {
 	switch t {
 	case ServerCrashed, ServerRestartAbandoned, ServerRecovery, ServerStartFailed,
