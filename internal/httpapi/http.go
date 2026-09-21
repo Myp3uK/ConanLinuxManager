@@ -23,6 +23,7 @@ import (
 	"github.com/example/conan-manager/internal/server"
 	"github.com/example/conan-manager/internal/store"
 	"github.com/example/conan-manager/internal/unitservice"
+	"github.com/example/conan-manager/internal/webui"
 )
 
 // api holds everything the handlers share. Keeping it in one place lets error
@@ -71,6 +72,10 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	}
 	channels := notify.NewRepository(db.DB(), box)
 	notifier := notify.NewDispatcher(channels, logger)
+	if err := notifier.UseProxy(cfg.NotifyProxy); err != nil {
+		// A proxy that is set but wrong would silently drop every alert.
+		logger.Error("notification proxy ignored", "error", err)
+	}
 	if box != nil {
 		control.Events.Subscribe("discord", notifier.Handle)
 	}
@@ -108,6 +113,9 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	mux.HandleFunc("/api/v1/notifications/", a.notificationChannel)
 	mux.HandleFunc("/api/v1/servers/", a.routeServer)
 	mux.HandleFunc("/api/v1/servers", a.servers)
+	// The browser interface; everything not under /api is the page and its
+	// assets, behind the same authentication as the API.
+	mux.Handle("/", webui.Handler())
 
 	handler := logging(mux, logger)
 	handler = requestProtection(handler, cfg.AllowedOrigin)
@@ -238,6 +246,13 @@ func (a *api) notificationChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case action == "" && r.Method == http.MethodGet:
+		channel, err := a.channels.Get(r.Context(), id)
+		if err != nil {
+			a.fail(w, r, http.StatusNotFound, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, channel)
 	case action == "test" && r.Method == http.MethodPost:
 		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 		defer cancel()
@@ -502,6 +517,14 @@ func (a *api) schedule(w http.ResponseWriter, r *http.Request) {
 			ServerID: id, Action: value.Action, Enabled: value.Enabled, Mode: value.Mode,
 			IntervalSeconds: value.IntervalSeconds, DailyTime: value.DailyTime,
 			CronExpression: value.CronExpression, Timezone: value.Timezone, NextRun: value.NextRun,
+		}
+		// Without an explicit first run, the schedule starts at its next
+		// occurrence from now; a client need not compute it.
+		if item.NextRun.IsZero() {
+			item.Normalize()
+			if next, err := item.NextOccurrence(time.Now().UTC()); err == nil {
+				item.NextRun = next
+			}
 		}
 		if err := a.repo.SetSchedule(r.Context(), item); err != nil {
 			a.fail(w, r, http.StatusBadRequest, err)

@@ -37,14 +37,17 @@ type State struct {
 	ExitCode string
 	// ExitStatus is the exit status for "exited" and the signal number otherwise.
 	ExitStatus int
+	// StartedAt is when the main process started; zero if it never did.
+	StartedAt time.Time
 }
 
-const properties = "--property=LoadState,ActiveState,Result,MainPID,ExecMainCode,ExecMainStatus"
+const properties = "--property=LoadState,ActiveState,Result,MainPID,ExecMainCode,ExecMainStatus,ExecMainStartTimestamp"
 
 // Show reads the unit state. A unit that is not loaded is an error, because
 // every caller expects a unit that was installed on purpose.
 func Show(ctx context.Context, run Runner, unit string) (State, error) {
-	out, err := run(ctx, "show", unit, properties)
+	// Unix timestamps ("@1789981221") avoid parsing a local time zone name.
+	out, err := run(ctx, "show", unit, properties, "--timestamp=unix")
 	if err != nil {
 		return State{}, err
 	}
@@ -64,6 +67,11 @@ func Show(ctx context.Context, run Runner, unit string) (State, error) {
 	}
 	s.MainPID, _ = strconv.Atoi(values["MainPID"])
 	s.ExitStatus, _ = strconv.Atoi(values["ExecMainStatus"])
+	if raw, ok := strings.CutPrefix(values["ExecMainStartTimestamp"], "@"); ok {
+		if seconds, err := strconv.ParseInt(raw, 10, 64); err == nil && seconds > 0 {
+			s.StartedAt = time.Unix(seconds, 0).UTC()
+		}
+	}
 	// systemd reports the code as a number (1 exited, 2 killed, 3 dumped) on
 	// some versions and as a word on others.
 	switch values["ExecMainCode"] {

@@ -23,6 +23,11 @@ func (c *Controller) emit(t events.Type, cfg server.Config, message string, deta
 // for by anyone, which is the definition of a crash here: a clean exit code
 // does not make an unrequested exit less of an outage.
 func (c *Controller) afterExit(cfg server.Config, crashed bool, exit *process.Exit) {
+	// cfg was read at start; restart_on_crash and hooks may have been changed
+	// since, while the server ran.
+	if fresh, err := c.Repo.Get(context.Background(), cfg.ID); err == nil {
+		cfg = fresh
+	}
 	details := map[string]string{}
 	if exit != nil {
 		details["exit"] = exit.String()

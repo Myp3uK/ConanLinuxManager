@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/example/conan-manager/internal/events"
 	"github.com/example/conan-manager/internal/ramstate"
@@ -191,11 +193,52 @@ func (c *Controller) Lifecycle(id string) Lifecycle {
 	return Lifecycle{State: "idle"}
 }
 
+// managerOnly clears the settings that only the manager reads. Two configs
+// equal after it differ in nothing the game or a running session depends on.
+func managerOnly(cfg server.Config) server.Config {
+	cfg.Name = ""
+	cfg.RestartOnCrash = false
+	cfg.Hooks = nil
+	cfg.AutoUpdate = false
+	cfg.Warnings = server.Warnings{}
+	cfg.UpdatedAt = time.Time{}
+	return cfg
+}
+
+// updateLive applies a change that touches only manager settings without the
+// lifecycle reservation, so it works on a running server: the game never reads
+// these, and the crash handler and hooks read them fresh from the database.
+// ok is false when the change needs the reservation.
+func (c *Controller) updateLive(ctx context.Context, id string, mutate func(*server.Config)) (server.Config, bool, error) {
+	c.settingsMu.Lock()
+	defer c.settingsMu.Unlock()
+	current, err := c.Repo.Get(ctx, id)
+	if err != nil {
+		return server.Config{}, false, err
+	}
+	updated := current
+	mutate(&updated)
+	if !reflect.DeepEqual(managerOnly(current), managerOnly(updated)) {
+		return server.Config{}, false, nil
+	}
+	if err := c.CheckHooks(updated); err != nil {
+		return server.Config{}, true, err
+	}
+	if err := c.Repo.Update(ctx, updated); err != nil {
+		return server.Config{}, true, err
+	}
+	fresh, err := c.Repo.Get(ctx, id)
+	return fresh, true, err
+}
+
 // UpdateConfig changes a stored server under the same reservation that start
 // and delete use, so a running server cannot have its settings moved underneath
 // it. That matters beyond bookkeeping: the game only reads its INI files during
 // startup, and a RAM session in flight owns the paths this config names.
 func (c *Controller) UpdateConfig(ctx context.Context, id string, mutate func(*server.Config)) (server.Config, error) {
+	if updated, ok, err := c.updateLive(ctx, id, mutate); ok || err != nil {
+		return updated, err
+	}
 	current, err := c.acquire(ctx, id, "configuring")
 	if err != nil {
 		return server.Config{}, err

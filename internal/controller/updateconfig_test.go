@@ -84,3 +84,39 @@ func TestUpdateConfigRefusesMovingOnDiskState(t *testing.T) {
 		}
 	}
 }
+
+// Settings only the manager reads can change while the game runs; the rest
+// still need it stopped.
+func TestManagerSettingsChangeOnABusyServer(t *testing.T) {
+	c, create := testController(t)
+	install := filepath.Join(t.TempDir(), "game")
+	if err := os.MkdirAll(install, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	create("a", install, "")
+	if _, err := c.acquire(context.Background(), "a", "running"); err != nil {
+		t.Fatal(err)
+	}
+	defer c.release("a")
+	updated, err := c.UpdateConfig(context.Background(), "a", func(cfg *server.Config) {
+		cfg.Name = "Новое имя"
+		cfg.RestartOnCrash = false
+		cfg.AutoUpdate = true
+		cfg.Warnings = server.Warnings{Minutes: []int{5}}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "Новое имя" || updated.RestartOnCrash || !updated.AutoUpdate || len(updated.Warnings.Minutes) != 1 {
+		t.Fatalf("%+v", updated)
+	}
+	if _, err := c.UpdateConfig(context.Background(), "a", func(cfg *server.Config) {
+		cfg.AutoUpdate = false
+		cfg.GamePort = 7800
+	}); err == nil {
+		t.Fatal("a game setting changed under a running server")
+	}
+	if cfg, _ := c.Repo.Get(context.Background(), "a"); !cfg.AutoUpdate {
+		t.Fatal("a refused change was partly applied")
+	}
+}

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conan Manager</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/ui/app.css">
+<script src="/ui/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/">Conan Manager</a>
+  <nav>
+    <a href="#/" data-nav="servers">Серверы</a>
+    <a href="#/events" data-nav="events">События</a>
+    <a href="#/notifications" data-nav="notifications">Уведомления</a>
+  </nav>
+</header>
+<main id="app"><p class="muted">Загрузка…</p></main>
+<div id="toasts" aria-live="polite"></div>
+<dialog id="confirm">
+  <p id="confirm-text"></p>
+  <div id="confirm-extra"></div>
+  <div class="row end">
+    <button type="button" id="confirm-cancel" class="ghost">Отмена</button>
+    <button type="button" id="confirm-ok" class="danger">Да</button>
+  </div>
+</dialog>
+</body>
+</html>

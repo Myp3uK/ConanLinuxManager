@@ -20,7 +20,10 @@ type Config struct {
 	// server; it can be on another disk than the servers.
 	BackupDir string
 	// BackupKeep is how many manager backups each server keeps; 0 keeps all.
-	BackupKeep   int
+	BackupKeep int
+	// NotifyProxy carries outgoing notifications (http://, https:// or
+	// socks5://) where the host cannot reach Discord directly.
+	NotifyProxy  string
 	Availability watchdog.AvailabilityPolicy
 	QueryHost    string
 	// SecretKey unlocks stored backup credentials. It is supplied by the service
@@ -70,6 +73,7 @@ func Load() Config {
 		BackupRetention:     integer("CONAN_MANAGER_BACKUP_RETENTION", 10),
 		BackupDir:           env("CONAN_MANAGER_BACKUP_DIR", "/var/lib/conan-manager/backups"),
 		BackupKeep:          integer("CONAN_MANAGER_BACKUP_KEEP", 20),
+		NotifyProxy:         env("CONAN_MANAGER_NOTIFY_PROXY", ""),
 		QueryHost:           env("CONAN_MANAGER_QUERY_HOST", "127.0.0.1"),
 		Availability: watchdog.AvailabilityPolicy{
 			Interval:       duration("CONAN_MANAGER_QUERY_INTERVAL", 15*time.Second),

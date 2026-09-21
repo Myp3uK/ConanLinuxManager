@@ -82,6 +82,9 @@ type Controller struct {
 	updating map[string]bool
 	// backingUp marks servers with a backup in progress.
 	backingUp map[string]bool
+	// settingsMu serialises changes made to a server's manager settings while
+	// it runs, which bypass the lifecycle reservation.
+	settingsMu sync.Mutex
 	// BackupDir holds the manager's own backups, one directory per server.
 	// Empty puts them next to each server's install directory.
 	BackupDir string

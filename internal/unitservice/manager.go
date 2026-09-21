@@ -191,6 +191,10 @@ func (m *Manager) Inspect(ctx context.Context, id string) (process.Snapshot, err
 	case state.Running():
 		s.State = process.StateRunning
 		s.PID = state.MainPID
+		// An adopted unit was started by an earlier manager; systemd knows when.
+		if !state.StartedAt.IsZero() {
+			s.StartedAt = state.StartedAt
+		}
 	case state.Stopping():
 		s.State = process.StateStopping
 		s.PID = state.MainPID

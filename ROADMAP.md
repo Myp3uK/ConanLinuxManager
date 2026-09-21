@@ -77,6 +77,13 @@ bind mount в private mount namespace.
       переменные окружения в `deploy/conan-manager.env.example`.
 - [ ] Бэкап по расписанию (расписание сейчас одно на сервер и только
       start/stop/restart).
+- [x] Настройки, которые игра не читает (название, `restart_on_crash`, хуки,
+      `auto_update`, `warnings`), меняются на работающем сервере; обработчик
+      выхода перечитывает их из базы.
+- [x] Время запуска подхваченного юнита берётся у systemd
+      (`ExecMainStartTimestamp`), а не теряется после перезапуска менеджера.
+- [ ] Discord вживую: с node2 Discord заблокирован; добавлен
+      `CONAN_MANAGER_NOTIFY_PROXY`, нужен прокси для проверки.
 
 ## 2. Надёжность scheduler
 
@@ -176,20 +183,31 @@ bind mount в private mount namespace.
 
 ## 5. Web UI
 
-- [ ] Добавить dashboard состояния manager и серверов.
-- [ ] Добавить список серверов и lifecycle controls.
-- [ ] Добавить просмотр логов.
-- [ ] Добавить редактор server configuration.
-- [ ] Добавить редактор scheduler.
-- [ ] Добавить jobs и execution history.
-- [ ] Добавить отображение `recovery_required`, alert-файла и доступных recovery
-      действий.
-- [ ] Добавить backup history, retention status и запуск offline recovery guide.
+Одностраничный интерфейс на чистом JS поверх JSON API, встроен в бинарник
+(`internal/webui`), без внешних библиотек, со строгой CSP. Проверен в headless
+Chrome на живом node2 сценарием из 10 шагов: бэкап, RCON, переименование на
+ходу, отказ правки конфигов на работающем сервере, фильтр логов, канал
+уведомлений, рестарт с предупреждением.
+
+- [x] Добавить dashboard состояния manager и серверов.
+- [x] Добавить список серверов и lifecycle controls (старт, стоп, рестарт с
+      предупреждением, kill, добавление, установка, удаление).
+- [x] Добавить просмотр логов (фильтр, автообновление).
+- [x] Добавить редактор server configuration (настройки сервера, INI по полям
+      и целиком, история версий).
+- [x] Добавить редактор scheduler.
+- [x] Добавить execution history (события, запуски хуков, запуски расписания;
+      задания — всплывающими уведомлениями до завершения).
+- [x] Добавить отображение `recovery_required` и действий: повторная проверка
+      базы, восстановление из бэкапа.
+- [x] Добавить backup history и восстановление.
+- [ ] Показывать alert-файл и offline recovery guide для RAM-сессий.
 
 ## 6. Production security
 
 - [ ] Заменить Basic Auth на session authentication.
-- [ ] Добавить CSRF tokens для browser mutations.
+- [ ] Добавить CSRF tokens для browser mutations (сейчас — проверка `Origin`
+      на изменяющих запросах).
 - [ ] Подготовить HTTPS/reverse-proxy deployment.
 - [ ] Добавить IP allowlist.
 - [ ] Добавить rate limiting.

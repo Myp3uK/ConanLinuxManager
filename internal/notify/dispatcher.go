@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/example/conan-manager/internal/events"
@@ -24,6 +25,33 @@ func NewDispatcher(repo *Repository, logger *slog.Logger) *Dispatcher {
 		attempts: 3,
 		sleep:    sleepCtx,
 	}}
+}
+
+// UseProxy sends notifications through a proxy: http://, https:// or
+// socks5://, with credentials in the URL if the proxy needs them. Where the
+// host cannot reach Discord directly, this is the only way out.
+func (d *Dispatcher) UseProxy(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	proxy, err := url.Parse(raw)
+	if err != nil || proxy.Host == "" {
+		return fmt.Errorf("notification proxy must be a URL such as socks5://host:1080")
+	}
+	switch proxy.Scheme {
+	case "http", "https", "socks5", "socks5h":
+	default:
+		return fmt.Errorf("notification proxy scheme must be http, https or socks5, not %q", proxy.Scheme)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyURL(proxy)
+	d.sender.client = &http.Client{Timeout: d.sender.client.Timeout, Transport: transport}
+	return nil
+}
+
+// Get returns one channel, with its webhook masked.
+func (r *Repository) Get(ctx context.Context, id string) (Channel, error) {
+	return r.get(ctx, id)
 }
 
 // Handle is the bus subscriber.

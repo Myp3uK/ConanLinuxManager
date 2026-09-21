@@ -229,3 +229,17 @@ func TestDispatcherDeliversToMatchingChannelsAndRecordsResult(t *testing.T) {
 }
 
 func slogDiscard() *slog.Logger { return slog.New(slog.DiscardHandler) }
+
+func TestProxyMustBeAUsableURL(t *testing.T) {
+	d := NewDispatcher(nil, nil)
+	for _, good := range []string{"", "socks5://user:pass@127.0.0.1:1080", "http://proxy.local:3128", "https://proxy.local:443"} {
+		if err := d.UseProxy(good); err != nil {
+			t.Errorf("%q refused: %v", good, err)
+		}
+	}
+	for _, bad := range []string{"127.0.0.1:1080", "ftp://proxy:21", "socks5://"} {
+		if err := d.UseProxy(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
