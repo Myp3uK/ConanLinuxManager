@@ -1,0 +1,37 @@
+[Unit]
+Description=Conan Exiles server %i (managed by conan-manager)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=conan-manager
+Group=conan-manager
+# The manager writes /var/lib/conan-manager/units/%i.json before every start;
+# run-server validates it and execs the game, so the game is the main process.
+# The manager's environment file is deliberately not loaded here: it holds the
+# admin password and the secret key, which the game has no business seeing.
+ExecStart=/opt/conan-manager/conan-manager run-server %i
+# SIGTERM makes Conan save the world. The manager kills a server that has not
+# stopped after CONAN_MANAGER_STOP_TIMEOUT (5 minutes) and then checks its
+# database. This timeout is only for when the manager is not running, such as
+# a host shutdown, and must stay longer than the manager's own.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=6min
+# Conan exits with 143 after saving on SIGTERM. Without this every normal stop
+# leaves the unit "failed". The manager does not rely on it either way: it
+# tells a crash from a stop by whether a stop was requested.
+SuccessExitStatus=143
+# The manager decides about restarts: it counts crashes, notifies and gives up
+# on a crash loop, which systemd's Restart= cannot report.
+Restart=no
+LimitNOFILE=100000
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+# Not enabled: the manager starts servers the operator left running.

@@ -71,7 +71,7 @@ func TestConcurrentReservationAndSharedDirectories(t *testing.T) {
 			if _, err := c.Install(ctx, id); err == nil {
 				t.Fatalf("install %s during %s", id, state)
 			}
-			if err := c.Delete(ctx, id); err == nil {
+			if err := c.Delete(ctx, id, DeleteOptions{}); err == nil {
 				t.Fatalf("delete %s during %s", id, state)
 			}
 		}
@@ -80,7 +80,7 @@ func TestConcurrentReservationAndSharedDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.release("a")
-	if err := c.Delete(ctx, "b"); err != nil {
+	if err := c.Delete(ctx, "b", DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Start(ctx, "b"); err == nil {
@@ -142,7 +142,7 @@ func TestPersistFailureRetainsLease(t *testing.T) {
 	if err := c.Start(ctx, "a"); err == nil {
 		t.Fatal("start after failed persistence")
 	}
-	if err := c.Delete(ctx, "a"); err == nil {
+	if err := c.Delete(ctx, "a", DeleteOptions{}); err == nil {
 		t.Fatal("delete after failed persistence")
 	}
 }

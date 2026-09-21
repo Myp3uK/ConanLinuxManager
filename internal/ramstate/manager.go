@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/example/conan-manager/internal/server"
 )
@@ -171,10 +172,66 @@ func (m Manager) Flush(cfg server.Config) (BackupSummary, error) {
 	return FindBackups(layout.PersistentSaved)
 }
 
+// ReleaseRAM frees the RAM disk after a verified flush. A stopped server must
+// not keep holding its database in tmpfs: on a large save that is hundreds of
+// megabytes of RAM reserved for a server that is not running.
+//
+// It is deliberately separate from Flush. The data is already persisted by the
+// time this runs, so a refusal here is a warning, never a recovery condition.
+func (m Manager) ReleaseRAM(cfg server.Config) error {
+	if !cfg.RamdiskEnabled {
+		return nil
+	}
+	layout := LayoutFor(cfg)
+	// Only a completed session authorizes deleting RAM. An in-progress marker
+	// means the flush did not finish and RAM is still the only copy.
+	if _, err := os.Lstat(SessionPath(cfg)); err == nil {
+		return fmt.Errorf("RAM retained: session marker is still present")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	entries, err := os.ReadDir(layout.RamDatabase)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	// Validate the whole set before removing anything, so an unexpected file or
+	// a link is never deleted implicitly.
+	for _, entry := range entries {
+		name := entry.Name()
+		if name != activeDatabase && name != activeDatabase+"-wal" && name != activeDatabase+"-shm" {
+			return fmt.Errorf("RAM retained: unexpected entry %s", name)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("RAM retained: non-regular entry %s", name)
+		}
+	}
+	for _, entry := range entries {
+		if err := os.Remove(filepath.Join(layout.RamDatabase, entry.Name())); err != nil {
+			return fmt.Errorf("RAM cleanup incomplete: %w", err)
+		}
+	}
+	return nil
+}
+
+// settleFor is how long a backup file must sit unchanged before it is treated
+// as fully written. A multi hundred megabyte backup takes seconds to write, and
+// moving it early would copy a truncated file and then delete the original.
+const settleFor = 3 * time.Second
+
 // DrainBackups moves any backups SQLite created next to the resolved RAM DB
 // back to the SSD Saved directory. Symlink resolution can make SQLite place
-// backup siblings in the RAM directory, so this runs periodically while the
-// server is active.
+// backup siblings in the RAM directory, so this runs frequently while the
+// server is active: the RAM disk is sized for the active database alone.
+//
+// A file is only removed from RAM once it has been copied whole. Files that are
+// still being written are left for a later call rather than moved half-copied.
 func (m Manager) DrainBackups(cfg server.Config) (BackupSummary, error) {
 	layout, err := m.Prepare(cfg)
 	if err != nil || layout.PersistentSaved == "" {
@@ -185,21 +242,66 @@ func (m Manager) DrainBackups(cfg server.Config) (BackupSummary, error) {
 	if err != nil {
 		return result, err
 	}
+	now := time.Now()
 	for _, entry := range entries {
 		if entry.IsDir() || !isBackupName(entry.Name()) {
 			continue
 		}
 		source := filepath.Join(layout.RamDatabase, entry.Name())
-		target := filepath.Join(layout.PersistentSaved, entry.Name())
+		before, err := os.Lstat(source)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return result, err
+		}
+		if !before.Mode().IsRegular() {
+			continue
+		}
+		// Still being written: wait for it to stop changing.
+		if now.Sub(before.ModTime()) < settleFor {
+			continue
+		}
+		target := filepath.Join(layout.PersistentSaved, drainedName(entry.Name(), before.ModTime()))
 		if err := copyFile(source, target); err != nil {
 			return result, err
+		}
+		// The copy carries the time the game finished writing it, so retention
+		// orders the series by when each save was taken rather than by when the
+		// drain happened to run.
+		if err := os.Chtimes(target, before.ModTime(), before.ModTime()); err != nil {
+			return result, err
+		}
+		// Re-check after the copy: if the file changed while it was being read,
+		// the copy is not trustworthy and the original must survive.
+		after, err := os.Lstat(source)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return result, err
+		}
+		if after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+			continue
 		}
 		if err := os.Remove(source); err != nil {
 			return result, err
 		}
-		result.Files = append(result.Files, entry.Name())
+		result.Files = append(result.Files, filepath.Base(target))
 	}
 	return result, nil
+}
+
+// drainedName makes each drained copy distinct. The drain takes each backup
+// out of RAM before the game rotates it, so the game only ever writes
+// game_0_backup_1.db, and draining under that name would leave exactly one file
+// on disk: the history an operator
+// restores from would be a single cycle deep, which is worse than not using a
+// RAM disk at all. The timestamp is the game's own write time, so draining the
+// same file twice produces the same name instead of a duplicate.
+func drainedName(name string, modified time.Time) string {
+	extension := filepath.Ext(name)
+	return strings.TrimSuffix(name, extension) + "_" + modified.UTC().Format("20060102T150405Z") + extension
 }
 
 type BackupSummary struct {

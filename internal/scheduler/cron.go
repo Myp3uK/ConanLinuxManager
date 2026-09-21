@@ -7,7 +7,13 @@ import (
 	"time"
 )
 
+// Cron holds the allowed values of a five field expression:
+// minute, hour, day of month, month, day of week.
 type Cron struct{ fields [5]map[int]bool }
+
+// searchLimit bounds the wall clock walk. A little over four years covers every
+// leap-year pattern, so an expression that finds nothing here can never match.
+const searchLimit = 4*366*24*60 + 24*60
 
 func ParseCron(expression string) (Cron, error) {
 	parts := strings.Fields(expression)
@@ -64,6 +70,11 @@ func parseCronField(value string, minimum, maximum int) (map[int]bool, error) {
 					return nil, err
 				}
 				start, end = parsed, parsed
+				// A bare value combined with a step runs to the end of the range,
+				// matching the usual "every N starting at X" reading of 5/15.
+				if step > 1 {
+					end = maximum
+				}
 			}
 		}
 		if start < minimum || end > maximum || start > end {
@@ -76,19 +87,54 @@ func parseCronField(value string, minimum, maximum int) (map[int]bool, error) {
 	return result, nil
 }
 
-func (c Cron) Next(now time.Time, location *time.Location) time.Time {
-	local := now.In(location).Truncate(time.Minute).Add(time.Minute)
-	for i := 0; i < 366*24*60; i++ {
-		month, day, weekday := int(local.Month()), local.Day(), int(local.Weekday())
-		dayMatches, weekdayMatches := c.fields[2][day], c.fields[4][weekday]
-		calendarMatches := dayMatches && weekdayMatches
-		if len(c.fields[2]) < 31 && len(c.fields[4]) < 7 {
-			calendarMatches = dayMatches || weekdayMatches
-		}
-		if c.fields[0][local.Minute()] && c.fields[1][local.Hour()] && c.fields[3][month] && calendarMatches {
-			return local.UTC()
-		}
-		local = local.Add(time.Minute)
+// matches reports whether a calendar minute satisfies the expression. When both
+// day of month and day of week are restricted, cron matches either of them.
+func (c Cron) matches(month, day, weekday, hour, minute int) bool {
+	if !c.fields[0][minute] || !c.fields[1][hour] || !c.fields[3][month] {
+		return false
 	}
-	return now.UTC().Add(366 * 24 * time.Hour)
+	dayRestricted := len(c.fields[2]) < 31
+	weekdayRestricted := len(c.fields[4]) < 7
+	if dayRestricted && weekdayRestricted {
+		return c.fields[2][day] || c.fields[4][weekday]
+	}
+	return c.fields[2][day] && c.fields[4][weekday]
+}
+
+// Next walks wall clock minutes in the schedule's own location, so a daily job
+// keeps its local time across a DST change instead of drifting by an hour.
+//
+// On a spring forward the named local time does not exist; time.Date normalizes
+// it into the new offset so the job still runs that day. On a fall back the hour
+// repeats and the earlier instant wins, so the job runs once rather than twice.
+func (c Cron) Next(now time.Time, location *time.Location) (time.Time, error) {
+	local := now.In(location)
+	year, month, day := local.Date()
+	hour, minute := local.Hour(), local.Minute()
+	for i := 0; i < searchLimit; i++ {
+		minute++
+		if minute > 59 {
+			minute = 0
+			hour++
+		}
+		if hour > 23 {
+			hour = 0
+			day++
+			// Normalize an overflowing day in UTC: plain calendar arithmetic
+			// must not be perturbed by the offset change it is looking for.
+			normalized := time.Date(year, month, day, 12, 0, 0, 0, time.UTC)
+			year, month, day = normalized.Date()
+		}
+		weekday := int(time.Date(year, month, day, 12, 0, 0, 0, time.UTC).Weekday())
+		if !c.matches(int(month), day, weekday, hour, minute) {
+			continue
+		}
+		candidate := time.Date(year, month, day, hour, minute, 0, 0, location)
+		// A normalized nonexistent time can land at or before now; keep walking.
+		if !candidate.After(now) {
+			continue
+		}
+		return candidate.UTC(), nil
+	}
+	return time.Time{}, fmt.Errorf("cron expression has no occurrence within four years")
 }

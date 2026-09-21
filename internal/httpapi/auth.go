@@ -17,13 +17,13 @@ func BasicAuth(username, password string) func(http.Handler) http.Handler {
 			if username == "" || password == "" {
 				// Never expose the management API without credentials. This also
 				// makes a broken or incomplete environment file fail closed.
-				writeError(w, http.StatusServiceUnavailable, nil)
+				writeStatus(w, http.StatusServiceUnavailable)
 				return
 			}
 			user, pass, ok := r.BasicAuth()
 			if !ok || subtle.ConstantTimeCompare([]byte(user), []byte(username)) != 1 || subtle.ConstantTimeCompare([]byte(pass), []byte(password)) != 1 {
 				w.Header().Set("WWW-Authenticate", `Basic realm="Conan Manager"`)
-				writeError(w, http.StatusUnauthorized, nil)
+				writeStatus(w, http.StatusUnauthorized)
 				return
 			}
 			next.ServeHTTP(w, r)

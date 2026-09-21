@@ -139,3 +139,66 @@ func TestAPIRejectsCrossOriginMutation(t *testing.T) {
 		t.Fatalf("cross-origin mutation status: %d", response.Code)
 	}
 }
+
+func TestNotificationChannelAPI(t *testing.T) {
+	t.Setenv("CONAN_MANAGER_ADMIN_USERNAME", "admin")
+	t.Setenv("CONAN_MANAGER_ADMIN_PASSWORD", "test-password")
+	token := "abcdefghijklmnopqrstuvwxyz_SECRET_0123456789"
+	call := func(handler http.Handler, method, path string, body any) *httptest.ResponseRecorder {
+		var reader *bytes.Reader
+		if body != nil {
+			data, _ := json.Marshal(body)
+			reader = bytes.NewReader(data)
+		} else {
+			reader = bytes.NewReader(nil)
+		}
+		request := httptest.NewRequest(method, path, reader)
+		request.SetBasicAuth("admin", "test-password")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	channel := map[string]any{"name": "Admins", "webhook_url": "https://discord.com/api/webhooks/123456789012345678/" + token, "mention": "<@&123456789012345>"}
+
+	// Without a secret key the URL could only be stored in clear, so it is refused.
+	t.Setenv("CONAN_MANAGER_SECRET_KEY", "")
+	db, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if r := call(New(db, slog.New(slog.DiscardHandler)), http.MethodPost, "/api/v1/notifications", channel); r.Code != http.StatusBadRequest {
+		t.Fatalf("created without a secret key: %d %s", r.Code, r.Body.String())
+	}
+
+	t.Setenv("CONAN_MANAGER_SECRET_KEY", "a-long-test-master-key")
+	handler := New(db, slog.New(slog.DiscardHandler))
+	created := call(handler, http.MethodPost, "/api/v1/notifications", channel)
+	if created.Code != http.StatusCreated || bytes.Contains(created.Body.Bytes(), []byte(token)) {
+		t.Fatalf("create: %d %s", created.Code, created.Body.String())
+	}
+	var got struct{ ID, Webhook string }
+	_ = json.Unmarshal(created.Body.Bytes(), &got)
+	if got.ID == "" || got.Webhook == "" {
+		t.Fatalf("created channel: %s", created.Body.String())
+	}
+	if r := call(handler, http.MethodPost, "/api/v1/notifications", map[string]any{"name": "x", "webhook_url": "https://example.com/hook"}); r.Code != http.StatusBadRequest {
+		t.Fatalf("foreign webhook accepted: %d", r.Code)
+	}
+	if r := call(handler, http.MethodPatch, "/api/v1/notifications/"+got.ID, map[string]any{"min_severty": "error"}); r.Code != http.StatusBadRequest {
+		t.Fatalf("misspelt field accepted: %d", r.Code)
+	}
+	if r := call(handler, http.MethodPatch, "/api/v1/notifications/"+got.ID, map[string]any{"min_severity": "error"}); r.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s", r.Code, r.Body.String())
+	}
+	list := call(handler, http.MethodGet, "/api/v1/notifications", nil)
+	if list.Code != http.StatusOK || bytes.Contains(list.Body.Bytes(), []byte(token)) || !bytes.Contains(list.Body.Bytes(), []byte(`"min_severity":"error"`)) {
+		t.Fatalf("list: %s", list.Body.String())
+	}
+	if r := call(handler, http.MethodDelete, "/api/v1/notifications/"+got.ID, nil); r.Code != http.StatusNoContent {
+		t.Fatalf("delete: %d", r.Code)
+	}
+	if r := call(handler, http.MethodGet, "/api/v1/events?limit=5", nil); r.Code != http.StatusOK {
+		t.Fatalf("events: %d %s", r.Code, r.Body.String())
+	}
+}

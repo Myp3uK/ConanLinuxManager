@@ -7,6 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/example/conan-manager/internal/events"
+	"github.com/example/conan-manager/internal/hooks"
+	"github.com/example/conan-manager/internal/process"
 	"github.com/example/conan-manager/internal/server"
 	"github.com/example/conan-manager/internal/watchdog"
 )
@@ -17,7 +20,11 @@ type Health struct {
 	DetectedAt     time.Time             `json:"detected_at,omitempty"`
 	Restarts       int                   `json:"restarts"`
 	RestartPending bool                  `json:"restart_pending"`
+	RestartAt      time.Time             `json:"restart_at,omitempty"`
+	RecentCrashes  int                   `json:"recent_crashes"`
+	LastExit       *process.Exit         `json:"last_exit,omitempty"`
 	Error          string                `json:"error,omitempty"`
+	crashes        []time.Time
 }
 
 func (c *Controller) observeAvailability(ctx context.Context, cfg server.Config) {
@@ -52,8 +59,18 @@ func (c *Controller) observeAvailability(ctx context.Context, cfg server.Config)
 			if c.Lifecycle(cfg.ID).State != "running" {
 				continue
 			}
+			previous := a.State
 			a.Record(time.Now().UTC(), err)
 			publish()
+			// The process starting is not the server being joinable: a large
+			// world takes minutes to load. The first query reply is.
+			if a.State == "responsive" && previous != "responsive" {
+				c.emit(events.ServerReady, cfg, "Server is accepting connections", nil)
+				_ = c.runHooks(ctx, hooks.Async, "on_ready", cfg, nil)
+			}
+			if a.State == "unavailable" && previous != "unavailable" {
+				c.emit(events.ServerUnavailable, cfg, "Server stopped answering queries", map[string]string{"error": a.Error})
+			}
 		}
 	}
 }
@@ -75,34 +92,21 @@ func (c *Controller) trip(id, reason string) {
 	h.Reason, h.DetectedAt = reason, time.Now().UTC()
 	// Three automatic attempts per manager lifetime. Log floods require operator
 	// inspection rather than immediately recreating the same disk pressure.
-	h.RestartPending = !c.closing && strings.HasPrefix(reason, "game_thread_hang:") && h.Restarts < 3
+	hang := strings.HasPrefix(reason, "game_thread_hang:")
+	h.RestartPending = !c.closing && hang && h.Restarts < 3
 	if err := c.stopProcess(context.Background(), id); err != nil {
 		h.Error = err.Error()
 		h.RestartPending = false
 	} else {
-		held.State = "stopping"
+		c.beginStopping(id)
 	}
 	c.health[id] = h
-}
-
-func (c *Controller) restartAfterWatchdog(id string) {
-	c.operationMu.Lock()
-	defer c.operationMu.Unlock()
-	c.lifecycleMu.Lock()
-	h := c.health[id]
-	if c.closing || !h.RestartPending {
-		c.lifecycleMu.Unlock()
-		return
-	}
-	h.RestartPending = false
-	h.Restarts++
-	c.health[id] = h
-	c.lifecycleMu.Unlock()
-	if err := c.start(context.Background(), id); err != nil {
-		c.lifecycleMu.Lock()
-		h = c.health[id]
-		h.Error = err.Error()
-		c.health[id] = h
-		c.lifecycleMu.Unlock()
+	if cfg, err := c.Repo.Get(context.Background(), id); err == nil {
+		details := map[string]string{"reason": reason}
+		if hang {
+			c.emit(events.ServerHang, cfg, "Game thread hang detected; stopping the server", details)
+		} else {
+			c.emit(events.ServerWatchdogStop, cfg, "Watchdog is stopping the server", details)
+		}
 	}
 }

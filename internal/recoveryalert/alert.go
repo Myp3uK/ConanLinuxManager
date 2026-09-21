@@ -35,21 +35,73 @@ func Write(cfg server.Config, cause error) error {
 		return err
 	}
 	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, append(data, '\n'), 0o640); err != nil {
+	// This file exists to survive the failure it reports, so it is flushed to
+	// disk before the rename rather than left in the page cache.
+	if err := writeSynced(temporary, append(data, '\n')); err != nil {
 		return err
 	}
 	if err := os.Rename(temporary, path); err != nil {
 		_ = os.Remove(temporary)
 		return err
 	}
-	return nil
+	// The rename itself must be durable, otherwise the alert can disappear in
+	// exactly the crash it was written to report.
+	return syncDirectory(filepath.Dir(path))
 }
 
 func Clear(cfg server.Config) error {
-	if err := os.Remove(Path(cfg)); err != nil && !os.IsNotExist(err) {
+	path := Path(cfg)
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
+	return syncDirectory(filepath.Dir(path))
+}
+
+func writeSynced(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
+	if err != nil {
+		return err
+	}
+	_, writeErr := f.Write(data)
+	if writeErr == nil {
+		writeErr = f.Sync()
+	}
+	closeErr := f.Close()
+	if writeErr != nil {
+		_ = os.Remove(path)
+		return writeErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(path)
+		return closeErr
+	}
 	return nil
+}
+
+// Pending reports the servers whose alert file is still present. It reads the
+// filesystem directly so an operator or a health check can find outstanding
+// recovery conditions without asking the manager over HTTP.
+func Pending(configs []server.Config) ([]Alert, error) {
+	result := make([]Alert, 0)
+	for _, cfg := range configs {
+		data, err := os.ReadFile(Path(cfg))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return result, err
+		}
+		var alert Alert
+		if err := json.Unmarshal(data, &alert); err != nil {
+			// A damaged alert still means the server needs attention.
+			alert = Alert{Version: 0, ServerID: cfg.ID, State: "recovery_required", Error: "unreadable alert file: " + err.Error()}
+		}
+		result = append(result, alert)
+	}
+	return result, nil
 }
 
 func sessionPath(cfg server.Config) string {

@@ -49,6 +49,19 @@ with tempfile.TemporaryDirectory(prefix="conan-recovery-cli-", dir="/var/tmp") a
     make_db(baseline, "baseline")
     (session / "manifest.json").write_text(json.dumps(manifest))
 
+    # The manager writes this alert next to the session marker when a server
+    # enters recovery_required. Offline recovery must clear it, otherwise an
+    # operator or health check keeps seeing a condition that no longer exists.
+    alert = install / "ConanSandbox" / ".conan-manager-recovery_required.json"
+    alert.write_text(json.dumps({
+        "version": 1,
+        "server_id": "cli-recovery-check",
+        "state": "recovery_required",
+        "error": "persist RAM database: simulated failure",
+        "created_at": "2026-09-20T00:00:00Z",
+    }))
+    assert alert.exists()
+
     result = subprocess.run(
         [RECOVER, "--server", "cli-recovery-check", "--install-dir", str(install),
          "--ram-dir", str(ram), "--source", "ram"],
@@ -59,6 +72,7 @@ with tempfile.TemporaryDirectory(prefix="conan-recovery-cli-", dir="/var/tmp") a
     assert read_value(saved / "game_0.db") == "ram"
     assert not session.exists()
     assert list(install.glob("ConanSandbox/.conan-manager-ram-session.recovered-*"))
+    assert not alert.exists(), "recovery alert survived a successful recovery"
 
     # A second independent fixture proves explicit baseline selection.
     install2 = root / "game-baseline"

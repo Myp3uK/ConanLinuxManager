@@ -1,9 +1,10 @@
 # Conan Manager
 
 Веб-менеджер для нескольких Conan Exiles Dedicated Server на одной Ubuntu-машине.
-Проект находится на стадии технического прототипа: основной backend уже умеет
-устанавливать и запускать UE5-сервер, имеет interval/daily/cron scheduler,
-но полноценный Web UI, моды, RCON и production-защита ещё не реализованы.
+Backend управляет UE5-серверами на Linux: установка и обновление, запуск как
+systemd-юнитов, перезапуск после падения, остановка с проверкой базы, хуки,
+уведомления в Discord, редактор конфигов, RCON, бэкапы и расписания (см.
+«Управление серверами»). Web UI, моды и production-защита ещё не реализованы.
 
 ## Цели проекта
 
@@ -22,11 +23,27 @@
 
 ## Текущее состояние
 
-Состояние исходников сверено с `e9795f1`. Локальные `go test ./...`,
-`go vet ./...` и проверки diff прошли. Новые scheduler/retention/alerting изменения
-ещё не развёрнуты и не приняты на node2. Ранее выполненные Linux launcher/recovery
-проверки не заменяют acceptance-тесты новой версии. Актуальный список задач —
-[ROADMAP.md](ROADMAP.md); этапы ниже описывают общие направления разработки.
+Backend развёрнут и принят на Linux-хосте `node2` (Ubuntu 24.04, ядро 6.8) с
+реальной установкой Conan Exiles UE5. `go vet ./...` и `go test -race ./...`
+проходят на Linux целиком, включая пакеты, которые собираются только там
+(`process`, `ramstate`, `sessionlock`, `controller`, `bindmount`, `tmpfs`,
+`launchservice`).
+
+Выполненные acceptance-тесты на node2:
+
+- миграция существующей production-БД (без таблиц `schedules`/`scheduler_runs`)
+  на актуальную схему без потери записей серверов;
+- scheduler: плановые `start`, `stop` и `restart` на живом Conan, перезапуск
+  менеджера и завершение по SIGTERM с ожиданием задачи «в полёте»;
+- retention на настоящих Conan backup-файлах;
+- offline recovery drill, включая очистку recovery alert-файла;
+- bind mount активной базы в private mount namespace на живом Conan UE5,
+  включая восстановление после SIGKILL: `integrity_check` = `ok`,
+  в RAM остаются ровно три SQLite-файла, backup-копии создаются на SSD.
+
+Сборка, тестирование и развёртывание с откатом выполняются через
+`scripts/node2.sh`. Актуальный список задач — [ROADMAP.md](ROADMAP.md);
+этапы ниже описывают общие направления разработки.
 
 ### Watchdog зависаний и логов
 
@@ -47,12 +64,11 @@ query завершает этот период раньше. После него
 `CONAN_MANAGER_QUERY_TIMEOUT`, `CONAN_MANAGER_QUERY_STARTUP_GRACE`,
 `CONAN_MANAGER_QUERY_UNAVAILABLE_FOR`. Длительности задаются как `15s`, `5m`, `10m`;
 некорректные значения и значения меньше секунды заменяются значениями по умолчанию.
-Порт берётся из `query_port` сервера и должен совпадать с реальными launch args:
-автоматической передачи порта игре пока нет. При MULTIHOME нужно указать доступный
+Порт берётся из `query_port` сервера; менеджер передаёт его игре как `-QueryPort`. При MULTIHOME нужно указать доступный
 адрес вместо стандартного `127.0.0.1`. Ошибочный адрес/порт даёт недоступность,
 а не доказанное зависание. Поддерживаются обычный A2S_INFO и challenge-handshake;
 split/compressed-ответы пока дают диагностическую ошибку.
-RCON и heartbeat игрового потока пока не подключены. Успешный query означает только
+RCON для проверки живости не используется, heartbeat игрового потока нет. Успешный query означает только
 работоспособность query-обработчика и не сбрасывает hang-события из логов.
 
 Каждые 5 секунд контроллер проверяет новые данные в `conan-manager-process.log`
@@ -100,11 +116,29 @@ Unix zombie (уже завершившийся процесс) отличает�
 - tmpfs-проверка через `/proc/self/mountinfo`;
 - RAM lifecycle для активной базы и WAL/SHM;
 - автоматический перенос backup-файлов, случайно созданных в RAM рядом с symlink-базой;
-- тесты repository, API, SteamCMD, backup, логов, tmpfs и RAM lifecycle.
+- тесты repository, API, SteamCMD, backup, логов, tmpfs и RAM lifecycle;
+- серверы как systemd-юниты, переживающие перезапуск менеджера;
+- перезапуск после падения, восстановление после перезагрузки хоста;
+- остановка «SIGTERM → 5 минут → kill → integrity_check»;
+- хуки, история событий, уведомления Discord;
+- редактор INI с историей версий;
+- обновления через SteamCMD, `auto_update`;
+- RCON-клиент, API и CLI, предупреждения игрокам;
+- бэкапы менеджера и восстановление через API;
+- чтение логов с конца с фильтром.
 - opt-in systemd launcher с bind mounts и Linux directory-flock;
 - offline `conan-recover`, долговечные RAM-session markers;
-- interval/daily/cron scheduler, SQLite-история завершённых попыток и retry;
-- count-based retention Conan backup-файлов и recovery JSON-alert.
+- interval/daily/cron scheduler с атомарным claim задания, SQLite-историей
+  попыток (`running`/`succeeded`/`failed`/`interrupted`), сохраняемыми
+  retry-счётчиками и разделением постоянных и временных ошибок;
+- параллельное выполнение расписаний разных серверов и защита от наложения
+  двух задач на один сервер;
+- cron с шагом по настенным часам: переход на летнее время не пропускает и не
+  дублирует задание, невозможная дата отвергается при сохранении расписания;
+- count-based retention Conan backup-файлов и recovery JSON-alert с fsync;
+- освобождение RAM после подтверждённого сброса и остановка сервера при
+  заполнении tmpfs;
+- генератор systemd-юнита RAM-диска `scripts/provision-ramdisk.sh`.
 
 ### Не реализовано
 
@@ -121,21 +155,234 @@ API пока не реализованы; перезапуск менеджер�
 - frontend/web UI;
 - полноценные пользователи, сессии и CSRF;
 - HTTPS/reverse proxy configuration;
-- визуальный редактор INI;
 - Steam Workshop mod manager;
 - генерация и проверка `modlist.txt`;
 - проверка обновлений модов по расписанию;
-- предупреждения игрокам и проверка игроков перед плановым рестартом;
-- RCON client;
-- Discord Webhook notifications;
-- pre-start/post-start и другие scripts;
-- удалённая отправка backup-файлов;
-- восстановление backup через API;
+- проверка RCON-предупреждений и `listplayers` на живом Conan UE5;
+- бэкап по расписанию (сейчас — по запросу и перед обновлением);
+- удалённая отправка backup-файлов (можно хуком `post_backup`);
 - автоматическая установка Wine/Proton;
 - проверенная поддержка UE4;
 - постоянное хранение installation job history (scheduler history уже в SQLite);
 - мониторинг игроков и готовности сервера;
 - полноценная диагностика портов и зависимостей.
+
+## Управление серверами
+
+Всё в этом разделе проверено на `node2` с реальным Conan UE5, кроме мест, где
+сказано иное.
+
+### Серверы как systemd-юниты
+
+С `CONAN_MANAGER_SERVER_UNITS=true` каждый сервер работает как отдельный юнит
+`conan-server@<id>.service`. Юнит запускает `conan-manager run-server <id>`,
+который читает спецификацию `/var/lib/conan-manager/units/<id>.json` и заменяет
+себя процессом игры. Менеджер управляет юнитами через `systemctl`; права дают
+polkit-правило `deploy/50-conan-manager.rules`.
+
+- Перезапуск или обновление менеджера сервер не останавливает: новый процесс
+  менеджера подхватывает работающие юниты («adopted running server»), PID игры
+  не меняется.
+- `desired_state` помнит, что оператор последним попросил. После перезагрузки
+  хоста менеджер запускает серверы, которые были оставлены работающими.
+- `restart_on_crash` (включён по умолчанию): упавший сервер перезапускается
+  через 15 с × номер попытки. После трёх падений за 30 минут перезапуски
+  прекращаются, сервер остаётся выключенным, уходит уведомление.
+
+### Остановка
+
+Остановка отправляет SIGTERM и ждёт до `CONAN_MANAGER_STOP_TIMEOUT` (5 минут).
+Не вышедший за это время процесс убивается, и сразу после выхода база мира
+проверяется `PRAGMA integrity_check`. Та же проверка идёт после падения.
+
+- Проверка прошла — сервер можно запускать как обычно.
+- Проверка не прошла — сервер получает `recovery_reason`, запуск и установка
+  запрещены до `POST /servers/{id}/verify` (повторная проверка) или
+  восстановления из бэкапа. Блокировка переживает перезапуск менеджера.
+
+Conan UE5 после SIGTERM около двух минут молчит в логе при 100% CPU и
+завершается с кодом 143; это нормальная остановка, а не зависание.
+
+### Порты
+
+`game_port` и `query_port` передаются игре как `-Port`/`-QueryPort`. Игра
+занимает также `game_port + 1`. При создании и изменении сервера менеджер
+отказывает, если порты или каталоги установки пересекаются с другим сервером.
+ID сервера — 1–64 латинских букв, цифр, `-` и `_`: он входит в имя юнита и пути.
+
+### Хуки
+
+Скрипты из `CONAN_MANAGER_HOOKS_DIR` (`/etc/conan-manager/hooks`). Каталог и
+скрипты должны принадлежать root и не быть доступными на запись другим —
+иначе скрипт не запустится. Список доступных скриптов: `GET /api/v1/hooks`.
+Назначение — полем `hooks` сервера:
+
+```json
+{ "hooks": { "pre_start": ["check-disk.sh"], "post_backup": ["upload.sh"] } }
+```
+
+| Событие | Режим | Что происходит при ошибке |
+|---|---|---|
+| `pre_start`, `pre_update`, `pre_backup` | gate: по очереди, до первой ошибки | действие отменяется |
+| `pre_stop` | wait: все скрипты, с ожиданием | остановка всё равно идёт |
+| `post_start`, `on_ready`, `post_stop`, `on_crash`, `post_update`, `post_backup` | async: в фоне | только запись в историю |
+
+Скрипт получает минимальное окружение без секретов менеджера:
+`CONAN_HOOK_EVENT`, `CONAN_SERVER_ID`, `CONAN_SERVER_NAME`, `CONAN_INSTALL_DIR`,
+`CONAN_SAVED_DIR`, `CONAN_GAME_PORT`, `CONAN_QUERY_PORT`. Если в `Game.ini`
+настроен RCON, ещё `CONAN_RCON_PORT` и `CONAN_RCON_PASSWORD`. Дополнительно:
+
+- `post_stop`, `on_crash` — `CONAN_EXIT`, `CONAN_EXIT_CODE`, `CONAN_EXIT_SIGNAL`;
+  `on_crash` — ещё `CONAN_CRASH_ATTEMPT`, `CONAN_WILL_RESTART`;
+- `pre/post_update` — `CONAN_BUILD_FROM`, `CONAN_BUILD_TO`;
+- `pre/post_backup` — `CONAN_BACKUP_REASON`; `post_backup` — ещё
+  `CONAN_BACKUP_PATH`, `CONAN_BACKUP_SHA256`.
+
+Скрипт, превысивший `CONAN_MANAGER_HOOK_TIMEOUT`, убивается вместе с группой
+процессов. История запусков с выводом: `GET /servers/{id}/hooks/runs`.
+
+### События и Discord
+
+Все события пишутся в SQLite: `GET /api/v1/events?server=<id>&limit=100`
+(постранично через `before`). Каналы уведомлений:
+
+```json
+POST /api/v1/notifications
+{
+  "name": "admins",
+  "webhook_url": "https://discord.com/api/webhooks/...",
+  "min_severity": "warning",
+  "language": "ru",
+  "mention": "<@&123456789>"
+}
+```
+
+`server_id` ограничивает канал одним сервером, `event_types` — списком событий.
+Webhook хранится зашифрованным ключом `CONAN_MANAGER_SECRET_KEY` и в ответах
+маскируется; принимаются только webhook-адреса Discord по https. Упоминание добавляется
+только к ошибкам. Проверка канала: `POST /api/v1/notifications/{id}/test`.
+Живая отправка в Discord ещё не проверялась.
+
+### Файлы конфигурации игры
+
+`ServerSettings`, `Game`, `Engine`:
+
+```text
+GET   /api/v1/servers/{id}/config/Game
+PATCH /api/v1/servers/{id}/config/Game   {"set": {"RconPlugin": {"RconPort": "25704"}}, "remove": {}}
+PUT   /api/v1/servers/{id}/config/Game   {"content": "..."}  (файл целиком)
+GET   /api/v1/servers/{id}/config/Game/versions
+POST  /api/v1/servers/{id}/config/Game/versions/{v}/restore
+```
+
+Правка сохраняет комментарии, порядок и переводы строк; ключи сравниваются без
+учёта регистра. Запись разрешена только на остановленном сервере: игра читает
+файлы при старте и переписывает при остановке, правка на ходу потерялась бы.
+Хранятся 50 прошлых версий каждого файла.
+
+Внимание: ответ `GET .../config/Game` содержит `RconPassword` открытым текстом.
+
+### Обновления
+
+```text
+GET  /api/v1/servers/{id}/update                      сравнение сборок
+POST /api/v1/servers/{id}/update  {"validate": false, "force": false, "warn": true}
+```
+
+Обновление — задание: `pre_update` → предупреждения игрокам (с `warn`) →
+остановка → бэкап мира → SteamCMD → `post_update` → запуск, если сервер работал.
+Сервер, работавший до обновления, запускается и при неудачном обновлении.
+Менеджер проверяет новую сборку раз в `CONAN_MANAGER_UPDATE_CHECK_INTERVAL`
+(30 минут) и сообщает о ней один раз. `auto_update: true` обновляет сервер
+сразу, с предупреждениями игрокам.
+
+### RCON
+
+Настройки менеджер берёт из `Game.ini` сервера, отдельно не хранит:
+
+```ini
+[RconPlugin]
+RconEnabled=True
+RconPort=25704
+RconPassword=...
+```
+
+```text
+POST /api/v1/servers/{id}/rcon      {"command": "broadcast Привет"}
+GET  /api/v1/servers/{id}/players   разбор listplayers
+```
+
+Консольный клиент, в том числе для хуков:
+
+```sh
+conan-manager rcon -a 127.0.0.1 -p 25704 -P пароль -q "broadcast Сервер перезапустится через 5 минут"
+CONAN_RCON_PASSWORD=пароль conan-manager rcon -p 25704 listplayers
+```
+
+Кириллица и пробелы передаются как есть. Команда должна быть одной строкой.
+**Ещё не проверено на живом Conan UE5:** формат вывода `listplayers` (разбор
+написан по формату UE4) и имя команды объявления (`broadcast`).
+
+Поле `rcon_port` в конфигурации сервера устарело и не используется.
+
+### Предупреждения игрокам
+
+```json
+{
+  "warnings": {
+    "minutes": [15, 5, 1],
+    "messages": { "restart": "Рестарт через {minutes} мин." },
+    "command": "broadcast"
+  }
+}
+```
+
+Перед плановыми `stop` и `restart`, автообновлением и запросами с
+`"warn": true` менеджер смотрит список игроков. Никого нет — действие сразу.
+Иначе объявление на каждой отметке и ожидание; если все вышли раньше, ожидание
+прекращается. Если RCON недоступен, действие выполняется по расписанию, а
+в события уходит `rcon.failed`. Тексты по умолчанию — на русском и английском
+для `stop`, `restart`, `update`.
+
+### Бэкапы менеджера
+
+```text
+POST   /api/v1/servers/{id}/backup                          {"reason": "manual"}
+GET    /api/v1/servers/{id}/backups
+DELETE /api/v1/servers/{id}/backups/{backup}
+POST   /api/v1/servers/{id}/backups/{backup}/restore
+```
+
+Бэкап — копия `game_0.db` через `VACUUM INTO`. База игры в WAL-режиме, поэтому
+копия снимается с работающего сервера, не останавливая и не блокируя его (на
+node2 — 23 мс). Копия проверяется `quick_check`, получает sha256 и только
+после этого своё имя. Файлы лежат в `CONAN_MANAGER_BACKUP_DIR/<id>`, отдельно
+от ротации игры, и могут быть на другом диске. Хранятся
+`CONAN_MANAGER_BACKUP_KEEP` (20) последних.
+
+Бэкап делается автоматически перед каждым обновлением. Восстановление — только
+на остановленном сервере и без RAM-диска: контрольная сумма сверяется,
+текущий мир сохраняется бэкапом `pre-restore`, затем восстановленная база
+проходит `integrity_check`, что снимает и блокировку `recovery_reason`.
+
+### Логи
+
+```text
+GET /api/v1/servers/{id}/logs?name=game&limit=200&filter=join
+```
+
+`name`: `game` (`ConanSandbox.log`, по умолчанию) или `process` (вывод процесса).
+Можно указать `path` внутри каталога установки. Лог читается с конца, поэтому
+запрос последних строк стоит одинаково для лога в 1 МБ и в 1 ГБ. Путь проверяется
+после раскрытия симлинков.
+
+### Удаление
+
+`DELETE /api/v1/servers/{id}` — только остановленный сервер. Удаляются запись,
+расписание и спецификация юнита; файлы игры и бэкапы остаются. С
+`?files=true` удаляется каталог установки, с `?backups=true` — бэкапы
+менеджера. Каталог не удаляется, если он слишком близко к корню или содержит
+другой сервер, SteamCMD-каталог других серверов или каталог бэкапов.
 
 ## Архитектура проекта
 
@@ -224,8 +471,21 @@ Backup-файлы не должны умножать расход RAM: они х
 4. заменяет активные файлы в `Saved` symlink-файлами;
 5. после запуска следит за backup-файлами, которые SQLite может создать рядом
    с разрешённым symlink-путём;
-6. переносит такие backup-файлы обратно на SSD каждые несколько секунд;
-7. после остановки копирует активную базу и sidecar-файлы обратно на SSD.
+6. переносит такие backup-файлы обратно на SSD каждые 5 секунд
+   (`DrainInterval`); этот интервал намеренно короткий, потому что при базе в
+   сотни мегабайт пары пропущенных циклов достаточно, чтобы заполнить tmpfs;
+7. после остановки копирует активную базу и sidecar-файлы обратно на SSD;
+8. после подтверждённого сброса освобождает RAM (`ReleaseRAM`), чтобы
+   остановленный сервер не удерживал базу в tmpfs. Освобождение происходит
+   только при отсутствующем маркере сессии и только для трёх известных
+   обычных файлов: любой неожиданный файл или ссылка отменяют всю очистку;
+9. при заполнении tmpfs выше `RamdiskUsageLimit` (по умолчанию 90%) штатно
+   останавливает сервер. Переполнение tmpfs ломает ближайшую запись SQLite,
+   поэтому остановка, пока базу ещё можно сбросить, предпочтительнее.
+
+Очистка старых backup-копий (retention) обходит всё дерево `Saved`, поэтому
+вынесена на отдельный редкий тик (`MaintenanceInterval`, по умолчанию минута)
+и не смешивается с дренажем RAM.
 
 На `node2` эта схема была проверена на реальном Conan UE5:
 
@@ -402,6 +662,52 @@ ConanSandboxServer.sh
 - создание Conan backup-файлов;
 - RAM lifecycle.
 
+## Каденция бэкапов Conan — что настраивается, а что нет
+
+Измерено на `node2`, Linux UE5 Shipping, сервер останавливался перед каждой
+правкой конфигурации.
+
+**Конфигурационные файлы нельзя править при работающем сервере.** Игра читает
+их один раз при старте и переписывает при остановке, поэтому значение,
+записанное на ходу, молча теряется. Менеджер поэтому пишет их в `start()`,
+под тем же lifecycle-локом, который не даёт стартовать дважды.
+
+| Ключ | Где работает | Результат |
+| --- | --- | --- |
+| `PeriodicBackupInterval` | `Game.ini`, секция `[/Script/ConanSandbox.ConanGameMode]` | Работает. Значение из `Game.ini` перекрывает `ServerSettings.ini`. Нижнего порога нет: 120 и 180 секунд соблюдались точно. |
+| `MaxPeriodicBackupsToKeep` | не выяснено | Ротация не «последние N»: в `libDreamworld.so` есть `HistogramBackupScheduler`, `useTimedBackups` и `allBackupTimes`, то есть копии распределяются по времени. Наблюдения: интервал 1–2 мин → 2 копии; 10 мин → 15 за 2.5 часа и число растёт; на боевом сервере — 40. Точная формула не установлена. |
+| `BackupDirectory` | не существует | Такого свойства в бинарнике нет. Строка `Build Config: BackupDirectory: %ls` относится к инсталлятору Epic (BuildPatchServices), рядом с `InstallDirectory` и `StagingDirectory`. Бэкапы всегда пишутся рядом с базой. |
+
+Разводящий эксперимент: при `PeriodicBackupInterval=120` в `Game.ini` и `=300`
+в `ServerSettings.ini` каденция была 120 с. При `MaxPeriodicBackupsToKeep=10`
+в `Game.ini` и `=6` в `ServerSettings.ini` за 17 минут и ~8 созданных бэкапов
+на диске оставалось 2. Это доказывает только, что при коротком интервале
+копий две; на длинных интервалах их больше (см. строку выше).
+
+### Почему это главный рычаг износа SSD
+
+Каждый цикл копирует базу целиком. При базе 435 МБ и стоковой каденции около
+480 секунд это ~3.2 ГБ записи в час на сервер. `PeriodicBackupInterval=2400`
+снижает это до ~650 МБ/час, то есть примерно в пять раз, и не зависит от того,
+включён ли RAM-диск.
+
+Настройка живёт в `periodic_backup_interval_seconds` конфигурации сервера.
+Ноль означает «не трогать» — существующие серверы после обновления сохраняют
+поведение игры, а не получают каденцию, которую никто не выбирал.
+
+### Глубина истории — задача менеджера
+
+В symlink-режиме игра пишет бэкап рядом с реальным путём базы, то есть в
+RAM, а дренаж забирает `game_0_backup_1.db` раньше, чем игра успевает его
+ротировать. Своя ротация игры в этом режиме не работает вовсе, и без
+дополнительных мер на SSD оставался бы один файл возрастом в один цикл.
+В bind-режиме этой проблемы нет: смонтированы только три файла, каталог
+`Saved` остаётся на SSD, бэкапы ложатся туда напрямую и ротируются самой игрой. Поэтому каждая копия при дренаже получает в имени
+время своей записи (`game_0_backup_1_20260921T043250Z.db`), а `internal/backup`
+подрезает серию до `CONAN_MANAGER_BACKUP_RETENTION`. Время модификации
+сохраняется от оригинала, чтобы retention сортировал по моменту сохранения
+игры, а не по моменту работы дренажа.
+
 ## SQLite-структура Conan UE5
 
 Установленный сервер использует:
@@ -432,15 +738,41 @@ GET    /api/v1/info
 GET    /api/v1/servers
 POST   /api/v1/servers
 GET    /api/v1/servers/{id}
+PATCH  /api/v1/servers/{id}
 DELETE /api/v1/servers/{id}
 
 POST   /api/v1/servers/{id}/start
 POST   /api/v1/servers/{id}/stop
 POST   /api/v1/servers/{id}/install
 
+POST   /api/v1/servers/{id}/restart         {"warn": true}
+POST   /api/v1/servers/{id}/kill
+POST   /api/v1/servers/{id}/verify
+GET    /api/v1/servers/{id}/update
+POST   /api/v1/servers/{id}/update
+POST   /api/v1/servers/{id}/backup
+GET    /api/v1/servers/{id}/backups
+DELETE /api/v1/servers/{id}/backups/{backup}
+POST   /api/v1/servers/{id}/backups/{backup}/restore
+POST   /api/v1/servers/{id}/rcon
+GET    /api/v1/servers/{id}/players
+GET    /api/v1/servers/{id}/hooks/runs
+GET|PATCH|PUT /api/v1/servers/{id}/config/{ServerSettings|Game|Engine}
+GET    /api/v1/servers/{id}/config/{file}/versions
+POST   /api/v1/servers/{id}/config/{file}/versions/{v}/restore
+GET|PUT|DELETE /api/v1/servers/{id}/schedule
+GET    /api/v1/servers/{id}/schedule/runs
+
 GET    /api/v1/jobs/{job-id}
-GET    /api/v1/servers/{id}/logs?path=...&limit=200
+GET    /api/v1/servers/{id}/logs?name=game&limit=200&filter=...
+GET    /api/v1/events
+GET    /api/v1/hooks
+GET|POST /api/v1/notifications
+GET|PATCH|DELETE /api/v1/notifications/{id}
+POST   /api/v1/notifications/{id}/test
 ```
+
+Подробности — в разделе «Управление серверами».
 
 Долгая установка возвращает job:
 
@@ -469,9 +801,30 @@ GET  /api/v1/jobs/{job-id}
   "ramdisk_enabled": true,
   "ramdisk_path": "/run/conan-manager/server-1",
   "ramdisk_size_mb": 2048,
-  "sync_interval_seconds": 300
+  "sync_interval_seconds": 300,
+  "periodic_backup_interval_seconds": 2400
 }
 ```
+
+`PATCH /api/v1/servers/{id}` меняет настройки уже созданного сервера. Тело —
+частичный JSON, отсутствующие поля не трогаются:
+
+```json
+{ "periodic_backup_interval_seconds": 2400 }
+```
+
+Меняются `name`, `branch`, `launch_args`, `game_port`, `query_port`,
+`ramdisk_enabled`, `ramdisk_size_mb`, `sync_interval_seconds`,
+`periodic_backup_interval_seconds`, `restart_on_crash`, `hooks`, `auto_update`
+и `warnings` (`rcon_port` принимается, но устарел). Неизвестное поле отклоняется с 400, а не
+игнорируется молча. `id`, `engine`, `runtime`, `install_dir`, `steamcmd_dir` и
+`ramdisk_path` изменить нельзя: они идентифицируют состояние на диске, и их
+подмена осиротила бы установку или RAM-сессию.
+
+Запрос берёт ту же lifecycle-резервацию, что старт и удаление, поэтому на
+работающем или занятом сервере он возвращает 409. Это не формальность: игра
+читает свои INI только при старте, и правка на ходу выглядела бы принятой,
+ничего не меняя до следующей остановки.
 
 ## Аутентификация и безопасность
 
@@ -589,6 +942,9 @@ Smoke-тест на Ubuntu уже проверил:
 
 ## План оставшейся разработки
 
+Актуальный статус с отметками выполненного — [ROADMAP.md](ROADMAP.md). Этапы
+ниже — исходный план; часть пунктов уже сделана (см. «Управление серверами»).
+
 ### Этап 1 — исправить RAM production-схему
 
 1. заменить symlink активных файлов на bind mounts;
@@ -600,12 +956,24 @@ Smoke-тест на Ubuntu уже проверил:
 
 ### Этап 2 — конфигурация Conan
 
+Сделано:
+
+- `PeriodicBackupInterval` в `Game.ini` пишется менеджером перед стартом
+  (`internal/gameconfig`), значение хранится в `periodic_backup_interval_seconds`;
+- `PATCH /api/v1/servers/{id}` для правки уже созданного сервера.
+
+Осталось:
+
 1. редактор `ServerSettings.ini`;
-2. редактор `Engine.ini` и `Game.ini`;
+2. редактор `Engine.ini` и остальных ключей `Game.ini`;
 3. backup конфигов перед изменением;
 4. история изменений;
 5. шаблоны настроек;
 6. безопасная проверка путей и аргументов.
+
+Любой редактор здесь обязан записывать файл только при остановленном сервере:
+игра читает INI при старте и переписывает при остановке, поэтому правка на ходу
+теряется без всякой ошибки.
 
 ### Этап 3 — моды
 
@@ -733,7 +1101,7 @@ Lifecycle также инициирует запись. Файл содержи�
 - UE4 не тестировался;
 - backup targets пока являются схемой данных, но не рабочим transport layer;
 - scheduler реализован, Linux acceptance и усиление гарантий выполнения ещё нужны;
-- нет RCON и Discord;
+- RCON-предупреждения и отправка в Discord не проверены вживую;
 - нет автоматического импорта существующего Conan-сервера;
 - offline recovery реализован; power-loss/reboot acceptance ещё нужен, потерянный
   прогресс tmpfs не восстанавливается из baseline автоматически.

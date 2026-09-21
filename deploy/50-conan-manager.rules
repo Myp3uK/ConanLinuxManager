@@ -1,0 +1,18 @@
+// Install as /etc/polkit-1/rules.d/50-conan-manager.rules, root:root 0644.
+//
+// Lets the conan-manager user start, stop and kill its own game server units.
+// Any instance name is allowed because conan-server@.service runs as the
+// conan-manager user itself: starting one gains no privilege. Nothing else is
+// allowed, in particular not other units or other verbs.
+polkit.addRule(function(action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units" || subject.user !== "conan-manager") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    var unit = action.lookup("unit");
+    var verb = action.lookup("verb");
+    if (unit && /^conan-server@[A-Za-z0-9][A-Za-z0-9_-]{0,63}\.service$/.test(unit) &&
+        ["start", "stop", "kill", "reset-failed"].indexOf(verb) !== -1) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

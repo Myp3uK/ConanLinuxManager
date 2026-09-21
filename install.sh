@@ -25,6 +25,10 @@ if [[ ! -x "${SOURCE_BINARY}" ]]; then
 fi
 
 install -d -m 0755 "${PREFIX}" "${DATA_DIR}" "${CONFIG_DIR}" "${RUN_DIR}"
+install -d -m 0750 "${DATA_DIR}/units"
+# Hook scripts must be root-owned and not writable by the service user; the
+# manager refuses anything else.
+install -d -m 0755 -o root -g root "${CONFIG_DIR}/hooks"
 if ! getent group "${SERVICE_USER}" >/dev/null; then
   groupadd --system "${SERVICE_USER}"
 fi
@@ -44,11 +48,20 @@ CONAN_MANAGER_DATABASE=${DATA_DIR}/manager.db
 CONAN_MANAGER_ADMIN_USERNAME=admin
 CONAN_MANAGER_ADMIN_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/\n' | cut -c1-32)
 CONAN_MANAGER_SECRET_KEY=$(openssl rand -base64 48 | tr -d '=+/\n' | cut -c1-48)
+CONAN_MANAGER_SERVER_UNITS=true
 EOF
 fi
 chmod 0600 "${CONFIG_DIR}/conan-manager.env"
 
 install -m 0644 "${SCRIPT_DIR}/deploy/conan-manager.service" /etc/systemd/system/conan-manager.service
+# Game servers run as their own units so they survive manager restarts. The
+# polkit rule lets the unprivileged manager start and stop exactly those.
+install -m 0644 "${SCRIPT_DIR}/deploy/conan-server@.service" /etc/systemd/system/conan-server@.service
+if [[ -d /etc/polkit-1/rules.d ]]; then
+  install -m 0644 -o root -g root "${SCRIPT_DIR}/deploy/50-conan-manager.rules" /etc/polkit-1/rules.d/50-conan-manager.rules
+else
+  echo "polkit is not installed: set CONAN_MANAGER_SERVER_UNITS=false or install polkitd" >&2
+fi
 systemctl daemon-reload
 systemctl enable conan-manager.service
 systemctl restart conan-manager.service

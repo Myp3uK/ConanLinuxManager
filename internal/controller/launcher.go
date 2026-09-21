@@ -8,13 +8,6 @@ import (
 	"github.com/example/conan-manager/internal/watchdog"
 )
 
-func (c *Controller) stopProcess(ctx context.Context, id string) error {
-	if c.Launcher.Enabled(id) {
-		return c.Launcher.Stop(ctx, id)
-	}
-	return c.Processes.Stop(ctx, id)
-}
-
 // AdoptLaunchers reconnects to independent units after manager restart. On
 // uncertainty reserve the server and poll; never infer stopped from a D-Bus error.
 func (c *Controller) AdoptLaunchers(ctx context.Context) {
@@ -37,24 +30,10 @@ func (c *Controller) AdoptLaunchers(ctx context.Context) {
 			}
 		}
 		c.lifecycleMu.Lock()
-		c.active[id] = &reservation{Lifecycle: Lifecycle{State: "running"}, paths: paths}
+		c.active[id] = &reservation{Lifecycle: Lifecycle{State: "running"}, paths: paths, backend: backendLauncher}
 		c.lifecycleMu.Unlock()
-		go c.monitor(cfg, watchdog.New(watchdog.Paths(cfg.InstallDir)))
+		go c.monitor(cfg, watchdog.New(watchdog.Paths(cfg.InstallDir)), backendLauncher)
 	}
-}
-
-func (c *Controller) waitProcess(ctx context.Context, id string) error {
-	if c.Launcher.Enabled(id) {
-		return c.Launcher.Wait(ctx, id)
-	}
-	return c.Processes.Wait(ctx, id)
-}
-
-func (c *Controller) Snapshot(id string) process.Snapshot {
-	if c.Launcher.Enabled(id) {
-		return c.Launcher.Snapshot(id)
-	}
-	return c.Processes.Snapshot(id)
 }
 
 func (c *Controller) launcherPersist(cfg server.Config) {

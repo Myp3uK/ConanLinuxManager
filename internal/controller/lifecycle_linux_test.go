@@ -71,7 +71,7 @@ func TestMonitorReleasesAfterUnexpectedExit(t *testing.T) {
 	if c.Snapshot("a").State != "failed" {
 		t.Fatalf("process: %+v", c.Snapshot("a"))
 	}
-	if err := c.Delete(ctx, "a"); err != nil {
+	if err := c.Delete(ctx, "a", DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 }

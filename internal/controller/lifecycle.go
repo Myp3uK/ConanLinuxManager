@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/example/conan-manager/internal/events"
 	"github.com/example/conan-manager/internal/ramstate"
 	"github.com/example/conan-manager/internal/recoveryalert"
 	"github.com/example/conan-manager/internal/server"
@@ -21,8 +22,12 @@ type Lifecycle struct {
 
 type reservation struct {
 	Lifecycle
-	paths []string
-	lease *sessionlock.Lease
+	paths      []string
+	lease      *sessionlock.Lease
+	backend    string
+	supervised bool
+	// forced is set when this run was ended by a kill rather than a stop.
+	forced bool
 }
 
 // canonicalPath also resolves existing ancestors of not-yet-created paths.
@@ -80,6 +85,11 @@ func (c *Controller) acquire(ctx context.Context, id, state string) (server.Conf
 	if err := ramstate.Pending(cfg); err != nil {
 		return cfg, err
 	}
+	// A world that failed its check must not be opened by the game or replaced
+	// by an install until an operator has verified it again.
+	if cfg.RecoveryReason != "" && (state == "starting" || state == "installing") {
+		return cfg, fmt.Errorf("server %q needs recovery before it can start: %s", id, cfg.RecoveryReason)
+	}
 	paths := []string{cfg.InstallDir}
 	if cfg.RamdiskEnabled {
 		paths = append(paths, cfg.RamdiskPath)
@@ -95,12 +105,18 @@ func (c *Controller) acquire(ctx context.Context, id, state string) (server.Conf
 	}
 	for owner, held := range c.active {
 		if owner == id {
-			return cfg, fmt.Errorf("server %q lifecycle is %s: %s", owner, held.State, held.Error)
+			if held.Error != "" {
+				return cfg, fmt.Errorf("server %q is %s: %s", owner, held.State, held.Error)
+			}
+			return cfg, fmt.Errorf("server %q is %s", owner, held.State)
 		}
 		for _, path := range paths {
 			for _, other := range held.paths {
 				if pathsOverlap(path, other) {
-					return cfg, fmt.Errorf("directory %q is reserved by server %q (%s)", path, owner, held.State)
+					// The path itself is deliberately omitted: it is an absolute
+					// server path, and the owning server and state are what the
+					// caller needs in order to act.
+					return cfg, fmt.Errorf("a directory of server %q is reserved by server %q (%s)", id, owner, held.State)
 				}
 			}
 		}
@@ -128,10 +144,21 @@ func (c *Controller) transition(id, state string, err error) {
 		}
 	}
 	c.lifecycleMu.Unlock()
-	if cfgErr == nil && state == "recovery_required" && err != nil {
-		_ = recoveryalert.Write(cfg, err)
-	} else if cfgErr == nil && (state == "running" || state == "idle") {
-		_ = recoveryalert.Clear(cfg)
+	if cfgErr != nil {
+		c.Logger.Error("read server while recording lifecycle state", "server", id, "state", state, "error", cfgErr)
+		return
+	}
+	// A failure here loses the operator's only out-of-band notice, so it is
+	// reported rather than swallowed. The lifecycle state itself already holds.
+	if state == "recovery_required" && err != nil {
+		if alertErr := recoveryalert.Write(cfg, err); alertErr != nil {
+			c.Logger.Error("write recovery alert", "server", id, "path", recoveryalert.Path(cfg), "error", alertErr)
+		}
+		c.emit(events.ServerRecovery, cfg, "Server needs offline recovery before it can start again", map[string]string{"error": err.Error()})
+	} else if state == "running" || state == "idle" {
+		if alertErr := recoveryalert.Clear(cfg); alertErr != nil {
+			c.Logger.Error("clear recovery alert", "server", id, "path", recoveryalert.Path(cfg), "error", alertErr)
+		}
 	}
 }
 
@@ -151,18 +178,47 @@ func (c *Controller) Lifecycle(id string) Lifecycle {
 		return held.Lifecycle
 	}
 	if cfg, err := c.Repo.Get(context.Background(), id); err == nil {
+		if cfg.RecoveryReason != "" {
+			return Lifecycle{State: "recovery_required", Error: cfg.RecoveryReason}
+		}
 		if err := ramstate.Pending(cfg); err != nil {
-			_ = recoveryalert.Write(cfg, err)
+			if alertErr := recoveryalert.Write(cfg, err); alertErr != nil {
+				c.Logger.Error("write recovery alert", "server", id, "path", recoveryalert.Path(cfg), "error", alertErr)
+			}
 			return Lifecycle{State: "recovery_required", Error: err.Error()}
 		}
 	}
 	return Lifecycle{State: "idle"}
 }
 
-func (c *Controller) Delete(ctx context.Context, id string) error {
-	if _, err := c.acquire(ctx, id, "deleting"); err != nil {
-		return err
+// UpdateConfig changes a stored server under the same reservation that start
+// and delete use, so a running server cannot have its settings moved underneath
+// it. That matters beyond bookkeeping: the game only reads its INI files during
+// startup, and a RAM session in flight owns the paths this config names.
+func (c *Controller) UpdateConfig(ctx context.Context, id string, mutate func(*server.Config)) (server.Config, error) {
+	current, err := c.acquire(ctx, id, "configuring")
+	if err != nil {
+		return server.Config{}, err
 	}
 	defer c.release(id)
-	return c.Repo.Delete(ctx, id)
+	updated := current
+	mutate(&updated)
+	// These identify on-disk state rather than describe behaviour. Changing one
+	// would orphan an install or a RAM session, so it is refused loudly instead
+	// of being dropped quietly by the repository.
+	if updated.ID != current.ID || updated.Engine != current.Engine ||
+		updated.Runtime != current.Runtime || updated.InstallDir != current.InstallDir ||
+		updated.SteamCMDDir != current.SteamCMDDir || updated.RamdiskPath != current.RamdiskPath {
+		return server.Config{}, fmt.Errorf("id, engine, runtime, install_dir, steamcmd_dir and ramdisk_path cannot be changed")
+	}
+	if err := c.CheckHooks(updated); err != nil {
+		return server.Config{}, err
+	}
+	if err := c.CheckConflicts(ctx, updated); err != nil {
+		return server.Config{}, err
+	}
+	if err := c.Repo.Update(ctx, updated); err != nil {
+		return server.Config{}, err
+	}
+	return c.Repo.Get(ctx, id)
 }

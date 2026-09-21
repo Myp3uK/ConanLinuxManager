@@ -16,7 +16,18 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 		h.RestartPending = false
 		c.health[id] = h
 	}
+	// Unit servers are independent of the manager: leave them running and let
+	// the next manager adopt them. Stopping them here would disconnect every
+	// player on each manager upgrade, which is what units exist to prevent.
+	for id, held := range c.active {
+		if held.backend == backendUnit && (held.State == "running" || held.State == "stopping") {
+			held.lease.Close()
+			delete(c.active, id)
+			c.Logger.Info("leaving server running for the next manager", "server", id)
+		}
+	}
 	c.lifecycleMu.Unlock()
+	c.detachOnce.Do(func() { close(c.detached) })
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -32,7 +43,7 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 				if err := c.stopProcess(ctx, id); err != nil {
 					failures = append(failures, fmt.Errorf("stop %s: %w", id, err))
 				} else {
-					held.State = "stopping"
+					c.beginStopping(id)
 				}
 			default:
 				pending = true

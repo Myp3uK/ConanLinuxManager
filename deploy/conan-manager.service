@@ -14,6 +14,12 @@ RestartSec=5
 RestartPreventExitStatus=2
 KillMode=mixed
 TimeoutStopSec=870
+# /run is a tmpfs: without RuntimeDirectory the manager's runtime directory is
+# gone after a reboot and nothing recreates it. Preserve keeps it, and the RAM
+# mounts inside it, across a manager restart.
+RuntimeDirectory=conan-manager
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

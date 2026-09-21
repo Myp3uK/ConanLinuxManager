@@ -63,14 +63,15 @@ func TestScheduleMigrationRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	// A row that cannot satisfy the new CHECK must abort the rebuild.
 	_, err = s.DB().Exec(`DELETE FROM manager_migrations;
 DROP TABLE schedules;
-CREATE TABLE schedules(server_id TEXT,action TEXT,enabled INTEGER,mode TEXT,interval_seconds INTEGER,daily_time TEXT,cron_expression TEXT,timezone TEXT,next_run TEXT,updated_at TEXT);
-INSERT INTO schedules VALUES('orphan','stop',1,'invalid',60,NULL,NULL,'UTC','next','updated');`)
+CREATE TABLE schedules(server_id TEXT,action TEXT,enabled INTEGER,mode TEXT,interval_seconds INTEGER,daily_time TEXT,cron_expression TEXT,timezone TEXT,failure_count INTEGER,next_run TEXT,updated_at TEXT);
+INSERT INTO schedules VALUES('orphan','stop',1,'invalid',60,NULL,NULL,'UTC',0,'next','updated');`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateScheduleModes(s.DB()); err == nil {
+	if err := applyStep(s.DB(), steps[1]); err == nil {
 		t.Fatal("invalid data migration succeeded")
 	}
 	var mode string
@@ -81,7 +82,118 @@ INSERT INTO schedules VALUES('orphan','stop',1,'invalid',60,NULL,NULL,'UTC','nex
 	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM manager_migrations`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("migration marked complete: %d %v", count, err)
 	}
-	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='schedules_cron_upgrade'`).Scan(&count); err != nil || count != 0 {
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name='schedules_v2'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("temporary table retained: %d %v", count, err)
+	}
+}
+
+// The production database on the acceptance host predates the scheduler: it has
+// servers and backup tables but no schedules at all.
+func TestUpgradeFromPreSchedulerDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manager.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`DELETE FROM manager_migrations;
+DROP TABLE schedules;
+DROP TABLE scheduler_runs;
+INSERT INTO servers(id,name,engine,runtime,install_dir,steamcmd_dir,game_port,query_port,ramdisk_path,created_at,updated_at)
+VALUES('ue5-test','Conan UE5 Test','ue5','native','/game','/steam',37777,37015,'/run/x','2026-09-19','2026-09-19');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen after upgrade: %v", err)
+	}
+	defer s.Close()
+	var id string
+	if err := s.DB().QueryRow(`SELECT id FROM servers`).Scan(&id); err != nil || id != "ue5-test" {
+		t.Fatalf("server row lost: %s %v", id, err)
+	}
+	// A cron schedule must be storable without inventing an interval.
+	if _, err := s.DB().Exec(`INSERT INTO schedules(server_id,action,enabled,mode,cron_expression,timezone,next_run,updated_at)
+VALUES('ue5-test','restart',1,'cron','0 5 * * *','Europe/Moscow','2026-09-21T05:00:00Z','2026-09-20T00:00:00Z')`); err != nil {
+		t.Fatalf("cron schedule without interval rejected: %v", err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO scheduler_runs(server_id,action,status,started_at) VALUES('ue5-test','restart','interrupted','2026-09-20T00:00:00Z')`); err != nil {
+		t.Fatalf("interrupted status rejected: %v", err)
+	}
+}
+
+func TestIntervalScheduleStillRequiresInterval(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.DB().Exec(`INSERT INTO servers(id,name,engine,runtime,install_dir,steamcmd_dir,game_port,query_port,ramdisk_path,created_at,updated_at)
+VALUES('one','One','ue5','native','/game','/steam',7777,27015,'','2026-09-20','2026-09-20')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO schedules(server_id,action,enabled,mode,interval_seconds,next_run,updated_at)
+VALUES('one','restart',1,'interval',30,'2026-09-21T00:00:00Z','2026-09-20T00:00:00Z')`); err == nil {
+		t.Fatal("interval below the minimum was accepted")
+	}
+}
+
+func TestMigrationsAreRecordedOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manager.db")
+	for i := 0; i < 3; i++ {
+		s, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var count int
+		if err := s.DB().QueryRow(`SELECT COUNT(*) FROM manager_migrations`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != len(steps) {
+			t.Fatalf("open %d recorded %d migrations, want %d", i, count, len(steps))
+		}
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A deployed manager has servers whose rows predate the backup-cadence column.
+// They must keep running with the game's own cadence rather than silently
+// getting one the operator never chose.
+func TestUpgradeAddsPeriodicBackupIntervalWithoutChangingBehaviour(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manager.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`DELETE FROM manager_migrations;
+ALTER TABLE servers DROP COLUMN periodic_backup_interval_seconds;
+INSERT INTO servers(id,name,engine,runtime,install_dir,steamcmd_dir,game_port,query_port,ramdisk_path,created_at,updated_at)
+VALUES('legacy','Legacy','ue5','native','/game','/steam',37777,37015,'/run/x','2026-09-19','2026-09-19');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen after upgrade: %v", err)
+	}
+	defer s.Close()
+	var seconds int
+	if err := s.DB().QueryRow(`SELECT periodic_backup_interval_seconds FROM servers WHERE id='legacy'`).Scan(&seconds); err != nil {
+		t.Fatalf("column missing after upgrade: %v", err)
+	}
+	if seconds != 0 {
+		t.Fatalf("existing server gained a cadence it never had: %d", seconds)
+	}
+	// Running the step twice must not fail on the already-present column.
+	if err := migrate(s.DB()); err != nil {
+		t.Fatalf("re-running migrations: %v", err)
 	}
 }
