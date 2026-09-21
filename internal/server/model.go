@@ -58,9 +58,23 @@ type Config struct {
 	AutoUpdate bool `json:"auto_update"`
 	// Warnings are announced to players over RCON before a scheduled stop or
 	// restart and an automatic update.
-	Warnings  Warnings  `json:"warnings"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Warnings Warnings `json:"warnings"`
+	// ZombieCheckSeconds restarts a server whose query port has not answered
+	// for this long after it finished loading; 0 turns the check off.
+	ZombieCheckSeconds int `json:"zombie_check_seconds"`
+	// RestartMinUptimeSeconds skips a scheduled restart of a server that has
+	// run for less than this, such as one started minutes before.
+	RestartMinUptimeSeconds int `json:"restart_min_uptime_seconds"`
+	// Map is the game path of the map to load; empty loads the Exiled Lands.
+	Map string `json:"map"`
+	// Multihome binds the server to one address of a host with several.
+	Multihome string `json:"multihome"`
+	// BackupOnStop takes a manager backup each time the server stops cleanly.
+	BackupOnStop bool `json:"backup_on_stop"`
+	// DiscordMessages replace the standard Discord texts for this server.
+	DiscordMessages DiscordMessages `json:"discord_messages"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
 // validID names a systemd unit, a unit specification and a backup directory,
@@ -88,6 +102,9 @@ func (c Config) Validate() error {
 	}
 	if c.RamdiskEnabled && (c.RamdiskPath == "" || c.RamdiskSizeMB < 128) {
 		return ErrInvalidConfig("enabled ramdisk requires a path and at least 128 MB")
+	}
+	if err := c.validateOptions(); err != nil {
+		return err
 	}
 	if err := c.Warnings.validate(); err != nil {
 		return err

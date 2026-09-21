@@ -41,3 +41,15 @@ func TestArgvWindowsRuntimesGetPortsToo(t *testing.T) {
 		t.Fatalf("wine argv: %s %v", path, args)
 	}
 }
+
+func TestArgvLoadsTheChosenMapAndAddress(t *testing.T) {
+	cfg := server.Config{Runtime: server.RuntimeNative, InstallDir: "/srv/game", LaunchArgs: "-log", GamePort: 7777, QueryPort: 27015,
+		Map: "/Game/Maps/ConanSandbox/ConanSandbox", Multihome: "192.168.0.100"}
+	_, args, err := Argv(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(args, " "); got != "ConanSandbox /Game/Maps/ConanSandbox/ConanSandbox -log -Port=7777 -QueryPort=27015 -MULTIHOME=192.168.0.100" {
+		t.Fatalf("args: %s", got)
+	}
+}

@@ -102,12 +102,12 @@ func TestManagerSettingsChangeOnABusyServer(t *testing.T) {
 		cfg.Name = "Новое имя"
 		cfg.RestartOnCrash = false
 		cfg.AutoUpdate = true
-		cfg.Warnings = server.Warnings{Minutes: []int{5}}
+		cfg.Warnings = server.Warnings{Steps: []server.WarningStep{{Minutes: 5}}}
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Name != "Новое имя" || updated.RestartOnCrash || !updated.AutoUpdate || len(updated.Warnings.Minutes) != 1 {
+	if updated.Name != "Новое имя" || updated.RestartOnCrash || !updated.AutoUpdate || len(updated.Warnings.Steps) != 1 {
 		t.Fatalf("%+v", updated)
 	}
 	if _, err := c.UpdateConfig(context.Background(), "a", func(cfg *server.Config) {

@@ -36,6 +36,14 @@ type Runtime interface {
 // command line.
 func Argv(cfg server.Config) (string, []string, error) {
 	extra := append(strings.Fields(cfg.LaunchArgs), portArgs(cfg)...)
+	if cfg.Multihome != "" {
+		extra = append(extra, "-MULTIHOME="+cfg.Multihome)
+	}
+	// The map is the first argument after the project; the game loads the
+	// Exiled Lands without one.
+	if cfg.Map != "" {
+		extra = append([]string{cfg.Map}, extra...)
+	}
 	windowsBinary := cfg.InstallDir + "/ConanSandbox/Binaries/Win64/ConanSandboxServer-Win64-Shipping.exe"
 	switch cfg.Runtime {
 	case server.RuntimeNative:

@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS servers (
     hooks TEXT NOT NULL DEFAULT '{}',
     auto_update INTEGER NOT NULL DEFAULT 0,
     warnings TEXT NOT NULL DEFAULT '{}',
+    options TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -354,6 +355,13 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_runs_server_started
 			return missingColumns(tx, "backup_events", "sha256")
 		},
 		apply: addColumns("backup_events", [][2]string{{"sha256", "TEXT NOT NULL DEFAULT ''"}}),
+	},
+	{
+		name: "servers-options-v1",
+		needed: func(tx *sql.Tx) (bool, error) {
+			return missingColumns(tx, "servers", "options")
+		},
+		apply: addColumns("servers", [][2]string{{"options", "TEXT NOT NULL DEFAULT '{}'"}}),
 	},
 }
 

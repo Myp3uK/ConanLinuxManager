@@ -163,7 +163,13 @@ func (c *Controller) Restart(ctx context.Context, id string) error {
 	defer ticker.Stop()
 	for {
 		if c.Lifecycle(id).State == "idle" {
-			return c.Start(ctx, id)
+			if err := c.Start(ctx, id); err != nil {
+				return err
+			}
+			if cfg, err := c.Repo.Get(ctx, id); err == nil {
+				c.emit(events.ServerRestarted, cfg, "Server restarted", c.announce(id, func(m server.DiscordMessages) string { return m.Restarted }))
+			}
+			return nil
 		}
 		select {
 		case <-ctx.Done():
@@ -188,6 +194,20 @@ func (c *Controller) StartScheduler(ctx context.Context) func() {
 	return func() { <-done }
 }
 
+// tooFreshToRestart applies the minimum uptime: a server started shortly
+// before a scheduled restart, by hand or after a crash, is left alone.
+func (c *Controller) tooFreshToRestart(cfg server.Config) (bool, time.Duration) {
+	if cfg.RestartMinUptimeSeconds <= 0 || c.Lifecycle(cfg.ID).State != "running" {
+		return false, 0
+	}
+	started := c.Snapshot(cfg.ID).StartedAt
+	if started.IsZero() {
+		return false, 0
+	}
+	uptime := time.Since(started)
+	return uptime < time.Duration(cfg.RestartMinUptimeSeconds)*time.Second, uptime
+}
+
 func (c *Controller) executeSchedule(ctx context.Context, item scheduler.Schedule) error {
 	cfg, err := c.Repo.Get(ctx, item.ServerID)
 	if err != nil {
@@ -202,6 +222,11 @@ func (c *Controller) executeSchedule(ctx context.Context, item scheduler.Schedul
 			err = c.Stop(ctx, item.ServerID)
 		}
 	case "restart":
+		if skip, uptime := c.tooFreshToRestart(cfg); skip {
+			c.emit(events.ScheduleSkipped, cfg, "Scheduled restart skipped: the server has not run long enough",
+				map[string]string{"uptime": uptime.Round(time.Second).String(), "minimum": (time.Duration(cfg.RestartMinUptimeSeconds) * time.Second).String()})
+			return nil
+		}
 		if err = c.warnPlayers(ctx, cfg, "restart"); err == nil {
 			err = c.Restart(ctx, item.ServerID)
 		}

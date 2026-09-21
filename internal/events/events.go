@@ -40,6 +40,8 @@ const (
 	DatabaseVerified       Type = "database.verified"
 	DatabaseCorrupt        Type = "database.corrupt"
 	PlayersWarned          Type = "players.warned"
+	ServerRestarted        Type = "server.restarted"
+	ScheduleSkipped        Type = "schedule.skipped"
 	RconFailed             Type = "rcon.failed"
 )
 

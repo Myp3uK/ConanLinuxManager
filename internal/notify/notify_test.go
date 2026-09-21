@@ -243,3 +243,14 @@ func TestProxyMustBeAUsableURL(t *testing.T) {
 		}
 	}
 }
+
+// A server's own text is the message of the notice, not one of its fields.
+func TestServerTextIsTheMessage(t *testing.T) {
+	c := Channel{Language: "ru"}
+	p := format(events.Event{Type: events.ServerReady, Severity: events.Info, ServerName: "PvE",
+		Details: map[string]string{"announce": "Сервер готов, заходите!"}}, c)
+	e := p.Embeds[0]
+	if e.Description != "**PvE**\nСервер готов, заходите!" || len(e.Fields) != 0 {
+		t.Fatalf("%+v", e)
+	}
+}

@@ -29,10 +29,14 @@ func (r *Repository) Create(ctx context.Context, c Config) error {
 	if err != nil {
 		return err
 	}
+	opts, err := encodeOptions(c)
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	_, err = r.db.ExecContext(ctx, `INSERT INTO servers
-        (id,name,engine,runtime,install_dir,steamcmd_dir,branch,launch_args,game_port,query_port,rcon_port,ramdisk_enabled,ramdisk_path,ramdisk_size_mb,sync_interval_seconds,periodic_backup_interval_seconds,restart_on_crash,desired_state,hooks,auto_update,warnings,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'stopped',?,?,?,?,?)`, c.ID, c.Name, c.Engine, c.Runtime, c.InstallDir, c.SteamCMDDir, defaultBranch(c.Branch), c.LaunchArgs, c.GamePort, c.QueryPort, c.RCONPort, c.RamdiskEnabled, c.RamdiskPath, c.RamdiskSizeMB, c.SyncIntervalSeconds, c.PeriodicBackupIntervalSeconds, c.RestartOnCrash, hooks, c.AutoUpdate, warnings, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
+        (id,name,engine,runtime,install_dir,steamcmd_dir,branch,launch_args,game_port,query_port,rcon_port,ramdisk_enabled,ramdisk_path,ramdisk_size_mb,sync_interval_seconds,periodic_backup_interval_seconds,restart_on_crash,desired_state,hooks,auto_update,warnings,options,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'stopped',?,?,?,?,?,?)`, c.ID, c.Name, c.Engine, c.Runtime, c.InstallDir, c.SteamCMDDir, defaultBranch(c.Branch), c.LaunchArgs, c.GamePort, c.QueryPort, c.RCONPort, c.RamdiskEnabled, c.RamdiskPath, c.RamdiskSizeMB, c.SyncIntervalSeconds, c.PeriodicBackupIntervalSeconds, c.RestartOnCrash, hooks, c.AutoUpdate, warnings, opts, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
 	}
@@ -40,7 +44,7 @@ func (r *Repository) Create(ctx context.Context, c Config) error {
 }
 
 func (r *Repository) List(ctx context.Context) ([]Config, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,engine,runtime,install_dir,steamcmd_dir,branch,launch_args,game_port,query_port,rcon_port,ramdisk_enabled,ramdisk_path,ramdisk_size_mb,sync_interval_seconds,periodic_backup_interval_seconds,restart_on_crash,desired_state,recovery_reason,hooks,auto_update,warnings,created_at,updated_at FROM servers ORDER BY name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,engine,runtime,install_dir,steamcmd_dir,branch,launch_args,game_port,query_port,rcon_port,ramdisk_enabled,ramdisk_path,ramdisk_size_mb,sync_interval_seconds,periodic_backup_interval_seconds,restart_on_crash,desired_state,recovery_reason,hooks,auto_update,warnings,options,created_at,updated_at FROM servers ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list servers: %w", err)
 	}
@@ -60,7 +64,7 @@ func (r *Repository) List(ctx context.Context) ([]Config, error) {
 }
 
 func (r *Repository) Get(ctx context.Context, id string) (Config, error) {
-	row := r.db.QueryRowContext(ctx, `SELECT id,name,engine,runtime,install_dir,steamcmd_dir,branch,launch_args,game_port,query_port,rcon_port,ramdisk_enabled,ramdisk_path,ramdisk_size_mb,sync_interval_seconds,periodic_backup_interval_seconds,restart_on_crash,desired_state,recovery_reason,hooks,auto_update,warnings,created_at,updated_at FROM servers WHERE id=?`, id)
+	row := r.db.QueryRowContext(ctx, `SELECT id,name,engine,runtime,install_dir,steamcmd_dir,branch,launch_args,game_port,query_port,rcon_port,ramdisk_enabled,ramdisk_path,ramdisk_size_mb,sync_interval_seconds,periodic_backup_interval_seconds,restart_on_crash,desired_state,recovery_reason,hooks,auto_update,warnings,options,created_at,updated_at FROM servers WHERE id=?`, id)
 	c, err := scan(row)
 	if err == sql.ErrNoRows {
 		return Config{}, fmt.Errorf("server %q not found", id)
@@ -83,14 +87,18 @@ func (r *Repository) Update(ctx context.Context, c Config) error {
 	if err != nil {
 		return err
 	}
+	opts, err := encodeOptions(c)
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC()
 	result, err := r.db.ExecContext(ctx, `UPDATE servers SET
         name=?,branch=?,launch_args=?,game_port=?,query_port=?,rcon_port=?,
         ramdisk_enabled=?,ramdisk_size_mb=?,sync_interval_seconds=?,
-        periodic_backup_interval_seconds=?,restart_on_crash=?,hooks=?,auto_update=?,warnings=?,updated_at=? WHERE id=?`,
+        periodic_backup_interval_seconds=?,restart_on_crash=?,hooks=?,auto_update=?,warnings=?,options=?,updated_at=? WHERE id=?`,
 		c.Name, defaultBranch(c.Branch), c.LaunchArgs, c.GamePort, c.QueryPort, c.RCONPort,
 		c.RamdiskEnabled, c.RamdiskSizeMB, c.SyncIntervalSeconds,
-		c.PeriodicBackupIntervalSeconds, c.RestartOnCrash, hooks, c.AutoUpdate, warnings, now.Format(time.RFC3339Nano), c.ID)
+		c.PeriodicBackupIntervalSeconds, c.RestartOnCrash, hooks, c.AutoUpdate, warnings, opts, now.Format(time.RFC3339Nano), c.ID)
 	if err != nil {
 		return fmt.Errorf("update server: %w", err)
 	}
@@ -155,8 +163,8 @@ func scan(s scanner) (Config, error) {
 	var recovery sql.NullString
 	var hooks string
 	var autoUpdate int
-	var warnings string
-	if err := s.Scan(&c.ID, &c.Name, &engine, &runtime, &c.InstallDir, &c.SteamCMDDir, &c.Branch, &c.LaunchArgs, &c.GamePort, &c.QueryPort, &rcon, &ramdisk, &c.RamdiskPath, &c.RamdiskSizeMB, &c.SyncIntervalSeconds, &c.PeriodicBackupIntervalSeconds, &restart, &c.DesiredState, &recovery, &hooks, &autoUpdate, &warnings, &created, &updated); err != nil {
+	var warnings, opts string
+	if err := s.Scan(&c.ID, &c.Name, &engine, &runtime, &c.InstallDir, &c.SteamCMDDir, &c.Branch, &c.LaunchArgs, &c.GamePort, &c.QueryPort, &rcon, &ramdisk, &c.RamdiskPath, &c.RamdiskSizeMB, &c.SyncIntervalSeconds, &c.PeriodicBackupIntervalSeconds, &restart, &c.DesiredState, &recovery, &hooks, &autoUpdate, &warnings, &opts, &created, &updated); err != nil {
 		return Config{}, err
 	}
 	c.Engine, c.Runtime = Engine(engine), Runtime(runtime)
@@ -166,6 +174,7 @@ func scan(s scanner) (Config, error) {
 	c.Hooks = decodeHooks(hooks)
 	c.AutoUpdate = autoUpdate != 0
 	c.Warnings = decodeWarnings(warnings)
+	decodeOptions(opts, &c)
 	if rcon.Valid {
 		value := int(rcon.Int64)
 		c.RCONPort = &value

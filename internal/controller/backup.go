@@ -23,6 +23,7 @@ const (
 	ReasonManual     = "manual"
 	ReasonPreUpdate  = "pre-update"
 	ReasonPreRestore = "pre-restore"
+	ReasonOnStop     = "on-stop"
 )
 
 var validReason = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)

@@ -175,11 +175,11 @@ API пока не реализованы; перезапуск менеджер�
 - **Серверы** — карточки с состоянием, доступностью, онлайном и кнопками
   запуска, остановки, рестарта (с предупреждением игроков) и kill; последние
   события; добавление сервера с подбором свободных портов и установкой.
-- **Страница сервера**: обзор и обновление; RCON-консоль с историей команд,
-  объявлениями и списком игроков; логи с фильтром и автообновлением;
-  редактор `ServerSettings`/`Game`/`Engine` (по полям и целиком, с историей
-  версий); бэкапы с восстановлением; расписание; настройки, предупреждения,
-  хуки и удаление; история событий и запусков хуков.
+- **Страница сервера**: обзор и обновление; **настройки** в духе Dedicated
+  Server Launcher (менеджер, запуск, настройки игры, предупреждения, тексты
+  Discord, скрипты, удаление); RCON-консоль с историей команд, объявлениями и
+  списком игроков; логи с фильтром; **рестарты**; бэкапы с восстановлением;
+  INI-файлы целиком с историей версий; история событий и запусков хуков.
 - **События** и **Уведомления** (каналы Discord: создание, тест, правка).
 
 Название, перезапуск при падении, автообновление, предупреждения и хуки
@@ -361,19 +361,49 @@ CONAN_RCON_PASSWORD=пароль conan-manager rcon -p 25704 listplayers
 ```json
 {
   "warnings": {
-    "minutes": [15, 5, 1],
-    "messages": { "restart": "Рестарт через {minutes} мин." },
+    "steps": [
+      { "minutes": 10, "message": "Внимание! Сервер будет {action} через {minutes} мин." },
+      { "minutes": 5,  "message": "Внимание! Сервер будет {action} через {minutes} мин." },
+      { "minutes": 2,  "message": "Внимание! Сервер будет {action} через {minutes} мин." }
+    ],
     "command": "broadcast"
   }
 }
 ```
 
+`{action}` становится «перезапущен», «остановлен» или «обновлён». Прежний
+формат (`minutes` + `messages`) читается и переводится в шаги.
+
 Перед плановыми `stop` и `restart`, автообновлением и запросами с
 `"warn": true` менеджер смотрит список игроков. Никого нет — действие сразу.
 Иначе объявление на каждой отметке и ожидание; если все вышли раньше, ожидание
 прекращается. Если RCON недоступен, действие выполняется по расписанию, а
-в события уходит `rcon.failed`. Тексты по умолчанию — на русском и английском
-для `stop`, `restart`, `update`.
+в события уходит `rcon.failed`. В интерфейсе предложены шаги за 10, 5 и 2 минуты,
+как в Dedicated Server Launcher.
+
+### Настройки как в Dedicated Server Launcher
+
+| DSL | Менеджер | Где хранится |
+|---|---|---|
+| Server Name, Server/Admin Password, Max Players, Region, Max Tick Rate, BattlEye, RCon (Enable, Port, Password, Karma) | «Настройки» → «Настройки игры» | INI игры: `Engine.ini` `[OnlineSubsystem] ServerName`, `ServerSettings.ini` `ServerPassword`/`AdminPassword`/`serverRegion`/`PVPEnabled`/`IsBattlEyeEnabled`/`ServerMessageOfTheDay`, `Game.ini` `[/Script/Engine.GameSession] MaxPlayers` и `[RconPlugin]`, `Engine.ini` `[/Script/OnlineSubsystemUtils.IpNetDriver] NetServerMaxTickRate` |
+| Startup Map, Multihome, порты, доп. параметры | «Настройки» → «Запуск» | `map`, `multihome`, `game_port`, `query_port`, `launch_args` |
+| Automatic Restart: daily at, Restarts per day, Minimum uptime | вкладка «Рестарты» | cron-расписание с часовым поясом + `restart_min_uptime_seconds` |
+| Zombie Check | «Настройки» → «Менеджер» | `zombie_check_seconds` |
+| Warning Messages (RCON) | «Настройки» → «Предупреждения» | `warnings.steps` |
+| Ready / Restarted / Shutdown (Discord) | «Настройки» → «Тексты для Discord» | `discord_messages` |
+| On Shutdown Backup | «Настройки» → «Бэкап при остановке» | `backup_on_stop` |
+| Run Scripts | «Настройки» → «Скрипты» | `hooks` |
+
+Имена ключей INI сверены с файлами и бинарником Conan UE5 на node2. `IsVACEnabled`
+в UE5 не найден, поэтому VAC не вынесен. Моды (`modlist.txt`) — отдельный этап.
+
+**Проверка на зомби:** если query-порт не отвечает `zombie_check_seconds`
+после загрузки, сервер останавливается по обычной схеме (SIGTERM → 5 минут →
+kill → проверка базы) и запускается снова (не больше трёх раз за жизнь
+менеджера).
+
+**Минимальный аптайм:** плановый рестарт сервера, проработавшего меньше
+`restart_min_uptime_seconds`, пропускается с событием `schedule.skipped`.
 
 ### Бэкапы менеджера
 

@@ -32,7 +32,7 @@ func (r *warnRun) run(w server.Warnings, action string) error {
 }
 
 func TestWarningsCountDownToTheAction(t *testing.T) {
-	w := server.Warnings{Minutes: []int{1, 15, 5}, Messages: map[string]string{"restart": "Рестарт через {minutes} мин"}}
+	w := server.Warnings{Steps: []server.WarningStep{{Minutes: 1, Message: "Рестарт через {minutes} мин"}, {Minutes: 15, Message: "Рестарт через {minutes} мин"}, {Minutes: 5, Message: "Рестарт через {minutes} мин"}}}
 	r := &warnRun{online: []int{3}}
 	if err := r.run(w, "restart"); err != nil {
 		t.Fatal(err)
@@ -47,14 +47,14 @@ func TestWarningsCountDownToTheAction(t *testing.T) {
 
 func TestNobodyOnlineMeansNoWait(t *testing.T) {
 	r := &warnRun{online: []int{0}}
-	if err := r.run(server.Warnings{Minutes: []int{10, 1}}, "stop"); err != nil || len(r.said) != 0 || len(r.waited) != 0 {
+	if err := r.run(server.Warnings{Steps: []server.WarningStep{{Minutes: 10}, {Minutes: 1}}}, "stop"); err != nil || len(r.said) != 0 || len(r.waited) != 0 {
 		t.Fatalf("said %q waited %v %v", r.said, r.waited, err)
 	}
 }
 
 func TestWarningsEndWhenTheLastPlayerLeaves(t *testing.T) {
 	r := &warnRun{online: []int{2, 0}}
-	if err := r.run(server.Warnings{Minutes: []int{10, 5, 1}}, "update"); err != nil {
+	if err := r.run(server.Warnings{Steps: []server.WarningStep{{Minutes: 10}, {Minutes: 5}, {Minutes: 1}}}, "update"); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.said) != 1 || len(r.waited) != 1 {
@@ -64,14 +64,14 @@ func TestWarningsEndWhenTheLastPlayerLeaves(t *testing.T) {
 
 func TestWarningCommandLine(t *testing.T) {
 	w := server.Warnings{}
-	if got := w.CommandLine(w.Message("stop", 5)); got != "broadcast Сервер будет остановлен через 5 мин. / Server stops in 5 min." {
+	if got := w.CommandLine(w.Message("stop", 5)); got != "broadcast Внимание! Сервер будет остановлен через 5 мин." {
 		t.Fatalf("%q", got)
 	}
 }
 
 func TestAnnounceReportsRconErrors(t *testing.T) {
 	boom := errors.New("connection refused")
-	err := announce(context.Background(), server.Warnings{Minutes: []int{5}}, "stop",
+	err := announce(context.Background(), server.Warnings{Steps: []server.WarningStep{{Minutes: 5}}}, "stop",
 		func() (int, error) { return 0, boom }, nil, nil)
 	if !errors.Is(err, boom) {
 		t.Fatalf("got %v", err)

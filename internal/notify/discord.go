@@ -47,6 +47,8 @@ var titles = map[events.Type]text{
 	events.BackupRestored:         {"♻️ Мир восстановлен из бэкапа", "♻️ World restored from a backup"},
 	events.ConfigChanged:          {"📝 Настройки изменены", "📝 Settings changed"},
 	events.PlayersWarned:          {"📢 Игроки предупреждены", "📢 Players warned"},
+	events.ServerRestarted:        {"🔄 Сервер перезапущен", "🔄 Server restarted"},
+	events.ScheduleSkipped:        {"⏭️ Плановый рестарт пропущен", "⏭️ Scheduled restart skipped"},
 	events.RconFailed:             {"⚠️ Ошибка RCON", "⚠️ RCON failed"},
 }
 
@@ -62,6 +64,8 @@ var detailNames = map[string]text{
 	"players": {"Игроков", "Players"},
 	"minutes": {"Минут", "Minutes"},
 	"file":    {"Файл", "File"},
+	"uptime":  {"Аптайм", "Uptime"},
+	"minimum": {"Минимум", "Minimum"},
 	"size":    {"Размер, байт", "Size, bytes"},
 }
 
@@ -163,9 +167,15 @@ func format(e events.Event, c Channel) payload {
 	if _, known := titles[e.Type]; known && e.Message != "" && (e.Type == events.ServerRestartAbandoned || e.Type == events.ServerKilled || e.Type == events.ServerRestarting) {
 		em.Description += "\n" + limit(e.Message, 1000)
 	}
+	// A server's own text for the event is the message itself, not a field.
+	if text := e.Details["announce"]; text != "" {
+		em.Description += "\n" + limit(text, 1500)
+	}
 	keys := make([]string, 0, len(e.Details))
 	for k := range e.Details {
-		keys = append(keys, k)
+		if k != "announce" {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
 	for _, k := range keys {

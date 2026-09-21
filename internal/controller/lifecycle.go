@@ -201,6 +201,10 @@ func managerOnly(cfg server.Config) server.Config {
 	cfg.Hooks = nil
 	cfg.AutoUpdate = false
 	cfg.Warnings = server.Warnings{}
+	cfg.ZombieCheckSeconds = 0
+	cfg.RestartMinUptimeSeconds = 0
+	cfg.BackupOnStop = false
+	cfg.DiscordMessages = server.DiscordMessages{}
 	cfg.UpdatedAt = time.Time{}
 	return cfg
 }

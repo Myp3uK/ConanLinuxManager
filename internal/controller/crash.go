@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/example/conan-manager/internal/events"
@@ -46,8 +47,17 @@ func (c *Controller) afterExit(cfg server.Config, crashed bool, exit *process.Ex
 		c.handleCrash(cfg, exit, details)
 		return
 	}
+	if text := strings.TrimSpace(cfg.DiscordMessages.Stopped); text != "" {
+		details["announce"] = text
+	}
 	c.emit(events.ServerStopped, cfg, "Server stopped", details)
 	_ = c.runHooks(context.Background(), hooks.Async, "post_stop", cfg, exitEnv(exit))
+	if cfg.BackupOnStop && c.beginBackup(cfg.ID) {
+		// The world is at rest now, which makes this the cleanest copy there
+		// is; a failure is reported by takeBackup itself.
+		_, _ = c.takeBackup(context.Background(), cfg, ReasonOnStop)
+		c.endBackup(cfg.ID)
+	}
 	c.restartPending(cfg.ID)
 }
 

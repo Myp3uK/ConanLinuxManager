@@ -654,6 +654,13 @@ type serverPatch struct {
 	Hooks      *map[string][]string `json:"hooks"`
 	AutoUpdate *bool                `json:"auto_update"`
 	Warnings   *server.Warnings     `json:"warnings"`
+	// The rest mirror the settings of the Dedicated Server Launcher.
+	ZombieCheckSeconds      *int                    `json:"zombie_check_seconds"`
+	RestartMinUptimeSeconds *int                    `json:"restart_min_uptime_seconds"`
+	Map                     *string                 `json:"map"`
+	Multihome               *string                 `json:"multihome"`
+	BackupOnStop            *bool                   `json:"backup_on_stop"`
+	DiscordMessages         *server.DiscordMessages `json:"discord_messages"`
 }
 
 func (a *api) patchServer(w http.ResponseWriter, r *http.Request, id string) {
@@ -678,6 +685,12 @@ func (a *api) patchServer(w http.ResponseWriter, r *http.Request, id string) {
 		assign(&cfg.Hooks, patch.Hooks)
 		assign(&cfg.AutoUpdate, patch.AutoUpdate)
 		assign(&cfg.Warnings, patch.Warnings)
+		assign(&cfg.ZombieCheckSeconds, patch.ZombieCheckSeconds)
+		assign(&cfg.RestartMinUptimeSeconds, patch.RestartMinUptimeSeconds)
+		assign(&cfg.Map, patch.Map)
+		assign(&cfg.Multihome, patch.Multihome)
+		assign(&cfg.BackupOnStop, patch.BackupOnStop)
+		assign(&cfg.DiscordMessages, patch.DiscordMessages)
 		if patch.RCONPort != nil {
 			value := *patch.RCONPort
 			cfg.RCONPort = &value

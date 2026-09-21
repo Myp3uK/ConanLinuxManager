@@ -173,7 +173,8 @@ function actionButtons(detail, refresh) {
   const id = detail.server.id;
   const state = detail.lifecycle.state;
   const running = state === 'running';
-  const warnings = detail.server.warnings && detail.server.warnings.minutes && detail.server.warnings.minutes.length;
+  const steps = (detail.server.warnings && detail.server.warnings.steps) || [];
+  const warnings = steps.length;
   const start = h('button', { class: 'primary', text: 'Запустить', disabled: state !== 'idle',
     onclick: e => act(e.target, async () => { await api('POST', `/servers/${enc(id)}/start`); toast('Запуск отправлен'); refresh(); }) });
   const stop = h('button', { text: 'Остановить', disabled: !running,
@@ -184,7 +185,7 @@ function actionButtons(detail, refresh) {
   const restart = h('button', { text: 'Рестарт', disabled: !running,
     onclick: e => act(e.target, async () => {
       const warn = h('input', { type: 'checkbox', checked: !!warnings, disabled: !warnings });
-      const label = h('label', { class: 'row' }, warn, warnings ? 'Предупредить игроков (' + detail.server.warnings.minutes.join(', ') + ' мин.)' : 'Предупреждения не настроены');
+      const label = h('label', { class: 'row' }, warn, warnings ? 'Предупредить игроков (за ' + steps.map(x => x.minutes).sort((a, b) => b - a).join(', ') + ' мин., если кто-то онлайн)' : 'Предупреждения не настроены');
       if (!await ask(`Перезапустить «${detail.server.name}»?`, { ok: 'Перезапустить', extra: [label] })) return;
       const job = await api('POST', `/servers/${enc(id)}/restart`, { warn: warn.checked });
       refresh(); await runJob(job); refresh();
@@ -224,8 +225,8 @@ async function viewServers() {
   const grid = h('div', { class: 'grid' });
   const eventsBox = h('div');
   replace(app,
-    h('div', { class: 'head' }, h('h1', { text: 'Серверы' }), h('span', { class: 'spacer' }),
-      h('button', { class: 'primary', text: 'Добавить сервер', onclick: () => { location.hash = '#/new'; } })),
+    h('div', { class: 'head' }, h('h1', { text: 'Серверы' }),
+      h('button', { class: 'primary', text: '+ Добавить сервер', onclick: () => { location.hash = '#/new'; } })),
     grid,
     h('h3', { text: 'Последние события' }),
     h('div', { class: 'panel' }, eventsBox));
@@ -310,7 +311,7 @@ async function viewNewServer() {
   let query = 27015; while (used.has(query)) query += 10;
 
   const id = h('input', { placeholder: 'server-1', required: true, pattern: '[A-Za-z0-9][A-Za-z0-9_-]{0,63}' });
-  const name = h('input', { placeholder: 'Мой сервер Conan' });
+  const name = h('input', { value: 'Conan Exiles' });
   const install = h('input', { placeholder: '/var/lib/conan-manager/servers/server-1/game' });
   const steam = h('input', { value: '/var/lib/conan-manager/steamcmd' });
   const branch = h('input', { value: 'public' });
@@ -355,11 +356,106 @@ async function viewNewServer() {
   id.focus();
 }
 
+// ---------- server settings helpers ----------
+
+const MAPS = [['/Game/Maps/ConanSandbox/ConanSandbox', 'Изгнанные земли (Exiled Lands)']];
+const DEFAULT_WARNING_TEXT = 'Внимание! Сервер будет {action} через {minutes} мин.';
+const DEFAULT_WARNINGS = [10, 5, 2].map(minutes => ({ minutes, message: DEFAULT_WARNING_TEXT }));
+const HOOK_LABELS = {
+  pre_start: 'Перед запуском', post_start: 'После запуска процесса', on_ready: 'Сервер готов',
+  pre_stop: 'Перед остановкой', post_stop: 'После остановки', on_crash: 'После падения',
+  pre_backup: 'Перед бэкапом', post_backup: 'После бэкапа', pre_update: 'Перед обновлением', post_update: 'После обновления',
+};
+
+function hooksHelp(info) {
+  if (!info.enabled) return h('p', { class: 'muted', text: 'Скрипты отключены на этом менеджере.' });
+  return h('div', {},
+    h('p', { class: 'small' }, 'Доступные скрипты: ', info.scripts.length
+      ? info.scripts.map((x, i) => [i ? ', ' : '', h('span', { class: 'mono', text: x.name }), x.usable ? '' : h('span', { class: 'badge bad', text: 'не запустится' })])
+      : h('span', { class: 'muted', text: 'пока нет' }), '. Несколько скриптов — через запятую, выполняются по порядку.'),
+    h('details', {}, h('summary', { class: 'small', text: 'Как добавить свой скрипт' }),
+      h('ol', { class: 'small' },
+        h('li', {}, 'Положите файл в ', h('span', { class: 'mono', text: info.dir }), ' на сервере (по SSH).'),
+        h('li', {}, 'Сделайте владельцем root и исполняемым: ', h('span', { class: 'mono', text: 'chown root:root скрипт; chmod 755 скрипт' }), '. Файл, который может менять кто-то кроме root, не запустится — иначе через него можно было бы выполнить что угодно с правами менеджера.'),
+        h('li', {}, 'Обновите эту страницу — скрипт появится в списке, впишите его имя в нужное событие и сохраните.')),
+      h('p', { class: 'small', text: 'Скрипту передаются переменные: CONAN_SERVER_ID, CONAN_SERVER_NAME, CONAN_INSTALL_DIR, CONAN_SAVED_DIR, CONAN_GAME_PORT, CONAN_QUERY_PORT, CONAN_RCON_PORT, CONAN_RCON_PASSWORD; для бэкапа ещё CONAN_BACKUP_PATH, для падения — CONAN_EXIT_CODE. «Перед запуском», «Перед обновлением» и «Перед бэкапом» могут отменить действие, завершившись с ненулевым кодом. Лимит — 5 минут.' }),
+      h('pre', { class: 'log', text: '#!/bin/sh\n# /etc/conan-manager/hooks/upload-backup — копия бэкапа на другой сервер\nscp "$CONAN_BACKUP_PATH" backup@storage:/backups/"$CONAN_SERVER_ID"/\n\n#!/bin/sh\n# /etc/conan-manager/hooks/hello — сообщение в игру через RCON\nconan-manager rcon -p "$CONAN_RCON_PORT" -q "broadcast Сервер снова в строю!"' })));
+}
+
+// GAME_FIELDS are the settings the Dedicated Server Launcher shows on its main
+// page. They live in the game's INI files, which stay the only place they are
+// stored; the form reads and writes those keys.
+const REGIONS = [['0', 'Европа'], ['1', 'Северная Америка'], ['2', 'Азия'], ['3', 'Австралия'], ['4', 'Южная Америка'], ['5', 'Япония']];
+const GAME_FIELDS = [
+  { file: 'Engine', section: 'OnlineSubsystem', key: 'ServerName', label: 'Название в списке серверов', def: '' },
+  { file: 'ServerSettings', section: 'ServerSettings', key: 'ServerPassword', label: 'Пароль для входа', type: 'password', def: '', hint: 'Пусто — вход без пароля.' },
+  { file: 'ServerSettings', section: 'ServerSettings', key: 'AdminPassword', label: 'Пароль администратора', type: 'password', def: '' },
+  { file: 'Game', section: '/Script/Engine.GameSession', key: 'MaxPlayers', label: 'Максимум игроков', type: 'number', def: '40' },
+  { file: 'ServerSettings', section: 'ServerSettings', key: 'serverRegion', label: 'Регион', options: REGIONS, def: '0' },
+  { file: 'Engine', section: '/Script/OnlineSubsystemUtils.IpNetDriver', key: 'NetServerMaxTickRate', label: 'Максимальный тикрейт', type: 'number', def: '30' },
+  { file: 'ServerSettings', section: 'ServerSettings', key: 'PVPEnabled', label: 'PvP', bool: true, def: 'False' },
+  { file: 'ServerSettings', section: 'ServerSettings', key: 'IsBattlEyeEnabled', label: 'BattlEye', bool: true, def: 'False' },
+  { file: 'ServerSettings', section: 'ServerSettings', key: 'ServerMessageOfTheDay', label: 'Сообщение дня', def: '' },
+  { group: 'RCON' },
+  { file: 'Game', section: 'RconPlugin', key: 'RconEnabled', label: 'Включить RCON', bool: true, def: 'False', hint: 'Нужен для консоли, списка игроков и предупреждений.' },
+  { file: 'Game', section: 'RconPlugin', key: 'RconPort', label: 'Порт RCON', type: 'number', def: '25575' },
+  { file: 'Game', section: 'RconPlugin', key: 'RconPassword', label: 'Пароль RCON', type: 'password', def: '' },
+  { file: 'Game', section: 'RconPlugin', key: 'RconMaxKarma', label: 'Karma', type: 'number', def: '60', hint: 'Сколько неверных паролей подряд терпит сервер, прежде чем заблокировать адрес.' },
+];
+
+async function gameSettings(ctx, running, reload) {
+  const views = {};
+  try {
+    for (const file of new Set(GAME_FIELDS.filter(f => f.file).map(f => f.file))) {
+      views[file] = await api('GET', `/servers/${enc(ctx.id)}/config/${file}`);
+    }
+  } catch (e) { return h('div', { class: 'notice bad', text: 'Не удалось прочитать настройки игры: ' + e.message }); }
+  // Unreal matches sections and keys without regard to case.
+  const current = f => {
+    const section = views[f.file].sections.find(s => s.name.toLowerCase() === f.section.toLowerCase());
+    const entry = section && section.entries.find(e => e.key.toLowerCase() === f.key.toLowerCase());
+    return entry ? entry.value : null;
+  };
+  const rows = [];
+  const controls = [];
+  for (const f of GAME_FIELDS) {
+    if (f.group) { rows.push(h('h3', { style: 'grid-column:1/-1;margin:8px 0 0', text: f.group })); continue; }
+    const stored = current(f);
+    const value = stored ?? f.def;
+    let input;
+    if (f.bool) input = h('input', { type: 'checkbox', checked: /^true$/i.test(value) });
+    else if (f.options) input = h('select', {}, f.options.map(([v, t]) => h('option', { value: v, text: `${v} — ${t}`, selected: v === value })));
+    else input = h('input', { type: f.type || 'text', value, autocomplete: 'off' });
+    if (f.type === 'password') input.onfocus = () => { input.type = 'text'; };
+    input.disabled = running;
+    controls.push({ f, input, stored, value });
+    rows.push(field(f.label, input, f.hint));
+  }
+  const save = h('button', { class: 'primary', text: 'Сохранить настройки игры', disabled: running, onclick: e => act(e.target, async () => {
+    const byFile = {};
+    for (const { f, input, stored } of controls) {
+      const now = f.bool ? (input.checked ? 'True' : 'False') : input.value.trim();
+      // A key the file does not have yet is written only when it differs from
+      // the game's default, so saving does not fill the file with defaults.
+      if (now === (stored ?? f.def)) continue;
+      ((byFile[f.file] = byFile[f.file] || {})[f.section] = byFile[f.file][f.section] || {})[f.key] = now;
+    }
+    if (!Object.keys(byFile).length) { toast('Изменений нет', 'info'); return; }
+    for (const [file, set] of Object.entries(byFile)) await api('PATCH', `/servers/${enc(ctx.id)}/config/${file}`, { set });
+    toast('Настройки игры сохранены'); reload();
+  }) });
+  return h('div', {}, h('h2', { text: 'Настройки игры' }),
+    running ? h('div', { class: 'notice', text: 'Сервер работает: игра читает эти файлы при старте и переписывает при остановке, поэтому менять их можно только на остановленном сервере.' })
+      : h('p', { class: 'muted small', text: 'Хранятся в INI-файлах игры (вкладка «Конфиги»), вступают в силу при следующем запуске.' }),
+    h('div', { class: 'form' }, rows),
+    h('div', { class: 'row end', style: 'margin-top:8px' }, save));
+}
+
 // ---------- server page ----------
 
 const TABS = [
-  ['overview', 'Обзор'], ['console', 'Консоль'], ['logs', 'Логи'], ['config', 'Конфиги'],
-  ['backups', 'Бэкапы'], ['schedule', 'Расписание'], ['settings', 'Настройки'], ['history', 'История'],
+  ['overview', 'Обзор'], ['settings', 'Настройки'], ['console', 'RCON'], ['logs', 'Логи'],
+  ['schedule', 'Рестарты'], ['backups', 'Бэкапы'], ['config', 'Конфиги'], ['history', 'История'],
 ];
 
 async function viewServer(id, tab) {
@@ -525,71 +621,28 @@ const TAB_VIEWS = {
   },
 
   async config(body, ctx) {
-    let file = 'ServerSettings', mode = 'fields';
+    let file = 'ServerSettings';
     const box = h('div');
     const draw = async () => {
       const running = ['running', 'starting', 'stopping'].includes(ctx.detail.lifecycle.state);
       let view;
       try { view = await api('GET', `/servers/${enc(ctx.id)}/config/${file}`); }
       catch (e) { replace(box, h('div', { class: 'notice bad', text: e.message })); return; }
-      const switcher = h('div', { class: 'row', style: 'margin-bottom:12px' },
-        ['ServerSettings', 'Game', 'Engine'].map(f => h('button', { class: f === file ? 'primary' : '', text: f + '.ini', onclick: () => { file = f; draw(); } })),
-        h('span', { class: 'spacer', style: 'flex:1' }),
-        h('button', { class: mode === 'fields' ? 'primary' : '', text: 'Поля', onclick: () => { mode = 'fields'; draw(); } }),
-        h('button', { class: mode === 'raw' ? 'primary' : '', text: 'Файл целиком', onclick: () => { mode = 'raw'; draw(); } }));
-      const notices = [
+      const text = h('textarea', { class: 'mono', rows: 32, value: view.content, disabled: running, spellcheck: 'false' });
+      replace(box,
+        h('div', { class: 'row', style: 'margin-bottom:12px' },
+          ['ServerSettings', 'Game', 'Engine'].map(f => h('button', { class: f === file ? 'primary' : '', text: f + '.ini', onclick: () => { file = f; draw(); } }))),
+        h('p', { class: 'muted small mono', text: view.path }),
         running ? h('div', { class: 'notice', text: 'Сервер работает: править можно только после остановки. Игра читает файлы при старте и переписывает при остановке — правка на ходу потерялась бы.' }) : null,
-        !view.exists ? h('div', { class: 'notice', text: 'Файла ещё нет: игра создаст его при первом запуске. Можно добавить ключи заранее.' }) : null,
-        view.managed && view.managed.length ? h('div', { class: 'notice', text: 'Менеджер переписывает перед стартом: ' + view.managed.join(', ') + ' (настройка сервера).' }) : null,
-      ];
-      const editor = mode === 'fields' ? fieldsEditor(view, running) : rawEditor(view, running);
-      replace(box, switcher, h('p', { class: 'muted small mono', text: view.path }), notices, editor, await versionsPanel(running));
-    };
-    const save = async body => {
-      await api('PATCH', `/servers/${enc(ctx.id)}/config/${file}`, body);
-      toast('Сохранено'); draw();
-    };
-    const fieldsEditor = (view, running) => {
-      const changed = {};
-      const sections = view.sections.map(section => {
-        const counts = {};
-        section.entries.forEach(e => { const k = e.key.toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
-        return h('div', { class: 'ini-section' }, h('h4', { text: '[' + section.name + ']' }),
-          section.entries.map(entry => {
-            const array = counts[entry.key.toLowerCase()] > 1;
-            const secret = /password|secret|token/i.test(entry.key);
-            const input = h('input', { value: entry.value, type: secret ? 'password' : 'text', autocomplete: 'off', disabled: running || array,
-              title: array ? 'Массив Unreal: правится в режиме «Файл целиком»' : '' });
-            input.oninput = () => {
-              (changed[section.name] = changed[section.name] || {})[entry.key] = input.value;
-              input.classList.toggle('changed', input.value !== entry.value);
-            };
-            if (secret) input.onfocus = () => { input.type = 'text'; };
-            return h('div', { class: 'ini-row' }, h('label', { text: entry.key + (array ? ' []' : '') }), input);
-          }));
-      });
-      const newSection = h('input', { placeholder: 'Секция, например RconPlugin', disabled: running });
-      const newKey = h('input', { placeholder: 'Ключ', disabled: running });
-      const newValue = h('input', { placeholder: 'Значение', disabled: running });
-      return h('div', { class: 'panel' },
-        sections.length ? sections : h('p', { class: 'muted', text: 'Файл пуст.' }),
-        h('div', { class: 'row end' }, h('button', { class: 'primary', text: 'Сохранить изменения', disabled: running, onclick: e => act(e.target, async () => {
-          if (!Object.keys(changed).length) { toast('Изменений нет', 'info'); return; }
-          await save({ set: changed });
-        }) })),
-        h('h3', { text: 'Добавить ключ' }),
-        h('div', { class: 'row' }, newSection, newKey, newValue, h('button', { text: 'Добавить', disabled: running, onclick: e => act(e.target, async () => {
-          if (!newSection.value.trim() || !newKey.value.trim()) { toast('Нужны секция и ключ', 'bad'); return; }
-          await save({ set: { [newSection.value.trim()]: { [newKey.value.trim()]: newValue.value } } });
-        }) })));
-    };
-    const rawEditor = (view, running) => {
-      const text = h('textarea', { class: 'mono', rows: 28, value: view.content, disabled: running, spellcheck: 'false' });
-      return h('div', { class: 'panel' }, text, h('div', { class: 'row end', style: 'margin-top:8px' },
-        h('button', { class: 'primary', text: 'Сохранить файл', disabled: running, onclick: e => act(e.target, async () => {
-          await api('PUT', `/servers/${enc(ctx.id)}/config/${file}`, { content: text.value });
-          toast('Сохранено'); draw();
-        }) })));
+        !view.exists ? h('div', { class: 'notice', text: 'Файла ещё нет: игра создаст его при первом запуске. Можно написать его заранее.' }) : null,
+        view.managed && view.managed.length ? h('div', { class: 'notice', text: 'Менеджер переписывает перед стартом: ' + view.managed.join(', ') + '.' }) : null,
+        h('p', { class: 'muted small', text: 'Основные настройки удобнее менять во вкладке «Настройки» — там они собраны в форму. Здесь — всё остальное.' }),
+        h('div', { class: 'panel' }, text, h('div', { class: 'row end', style: 'margin-top:8px' },
+          h('button', { class: 'primary', text: 'Сохранить файл', disabled: running, onclick: e => act(e.target, async () => {
+            await api('PUT', `/servers/${enc(ctx.id)}/config/${file}`, { content: text.value });
+            toast('Сохранено'); draw();
+          }) }))),
+        await versionsPanel(running));
     };
     const versionsPanel = async running => {
       let versions = [];
@@ -647,43 +700,99 @@ const TAB_VIEWS = {
   async schedule(body, ctx) {
     const box = h('div');
     const runsBox = h('div');
+    const pad = n => String(n).padStart(2, '0');
+    const PER_DAY = [1, 2, 3, 4, 6, 8, 12, 24];
+    // A simple schedule is restarts spread evenly over the day from a first
+    // time, which is what the form edits; anything else is shown as cron.
+    const parseSimple = s => {
+      if (!s || s.mode !== 'cron' || s.action !== 'restart') return null;
+      const m = /^(\d{1,2}) ([\d,]+) \* \* \*$/.exec(s.cron_expression || '');
+      if (!m) return null;
+      const hours = m[2].split(',').map(Number).sort((a, b) => a - b);
+      const n = hours.length;
+      if (!PER_DAY.includes(n)) return null;
+      const step = 24 / n;
+      const first = hours.find(x => x < step) ?? hours[0];
+      const expected = Array.from({ length: n }, (_, i) => (first + i * step) % 24).sort((a, b) => a - b);
+      if (expected.join() !== hours.join()) return null;
+      return { minute: +m[1], first, perDay: n };
+    };
+    const hoursOf = (first, perDay) => Array.from({ length: perDay }, (_, i) => (first + i * (24 / perDay)) % 24);
+    const zones = ['Europe/Moscow', 'Europe/Kaliningrad', 'Europe/Samara', 'Asia/Yekaterinburg', 'Asia/Novosibirsk', 'Asia/Vladivostok', 'Europe/Kyiv', 'Europe/Minsk', 'Europe/Berlin', 'Europe/London', 'UTC'];
+    const localZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
     const draw = async () => {
       let current = null;
-      try { current = await api('GET', `/servers/${enc(ctx.id)}/schedule`); } catch (e) { if (e.status !== 404) { toast(e.message, 'bad'); } }
-      const enabled = h('input', { type: 'checkbox', checked: current ? current.enabled : true });
-      const action = h('select', {}, [['restart', 'Рестарт'], ['stop', 'Остановка'], ['start', 'Запуск']].map(([v, t]) => h('option', { value: v, text: t, selected: current && current.action === v })));
-      const mode = h('select', {}, [['daily', 'Каждый день в заданное время'], ['interval', 'С интервалом'], ['cron', 'Cron-выражение']].map(([v, t]) => h('option', { value: v, text: t, selected: current ? current.mode === v : v === 'daily' })));
-      const minutes = h('input', { type: 'number', min: 1, value: current && current.interval_seconds ? Math.round(current.interval_seconds / 60) : 360 });
-      const daily = h('input', { type: 'time', value: current && current.daily_time ? current.daily_time : '05:00' });
-      const cron = h('input', { class: 'mono', placeholder: '0 5 * * *', value: current && current.cron_expression ? current.cron_expression : '0 5 * * *' });
-      const zone = h('input', { value: current && current.timezone ? current.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone });
-      const rows = {
-        interval: field('Интервал, мин', minutes),
-        daily: field('Время (UTC)', daily, 'Время в UTC. Для местного времени используйте cron с часовым поясом.'),
-        cron: [field('Выражение', cron, 'минута час день месяц день-недели (0 — воскресенье)'), field('Часовой пояс', zone)],
+      try { current = await api('GET', `/servers/${enc(ctx.id)}/schedule`); } catch (e) { if (e.status !== 404) toast(e.message, 'bad'); }
+      const s = ctx.detail.server;
+      const simple = parseSimple(current);
+      const custom = current && !simple;
+
+      const enabled = h('input', { type: 'checkbox', checked: current ? current.enabled && !custom : false });
+      const first = h('input', { type: 'time', value: simple ? `${pad(simple.first)}:${pad(simple.minute)}` : '06:00' });
+      const perDay = h('select', {}, PER_DAY.map(n => h('option', { value: n, selected: simple ? simple.perDay === n : n === 1,
+        text: n === 1 ? '1 — раз в сутки' : `${n} — каждые ${24 / n} ч` })));
+      const zone = h('input', { list: 'zones', value: current && current.timezone && current.timezone !== 'UTC' ? current.timezone : localZone });
+      const minUptime = h('input', { type: 'time', value: `${pad(Math.floor((s.restart_min_uptime_seconds || 0) / 3600))}:${pad(Math.floor((s.restart_min_uptime_seconds || 0) % 3600 / 60))}` });
+      const preview = h('p', { class: 'notice' });
+      const showPreview = () => {
+        const [hh, mm] = (first.value || '06:00').split(':').map(Number);
+        const hours = hoursOf(hh, +perDay.value).sort((a, b) => a - b);
+        replace(preview, enabled.checked
+          ? ['Сервер будет перезапускаться каждый день в ', h('strong', { text: hours.map(x => `${pad(x)}:${pad(mm)}`).join(', ') }), ` (${zone.value}).`,
+            minUptime.value !== '00:00' ? ` Рестарт пропускается, если сервер проработал меньше ${minUptime.value}.` : '']
+          : 'Автоматический рестарт выключен.');
       };
-      const variable = h('div', { class: 'form', style: 'grid-column:1/-1' });
-      const showMode = () => replace(variable, rows[mode.value]);
-      mode.onchange = showMode; showMode();
-      const warnings = ctx.detail.server.warnings && ctx.detail.server.warnings.minutes && ctx.detail.server.warnings.minutes.length;
-      replace(box, h('div', { class: 'panel' }, h('h2', { text: 'Расписание' }),
-        current ? h('p', {}, 'Следующий запуск: ', h('strong', { text: fmtTime(current.next_run) }), h('span', { class: 'muted', text: ' (' + fmtAgo(current.next_run) + ')' }),
-          current.failure_count ? h('span', { class: 'badge bad', style: 'margin-left:8px', text: 'ошибок подряд: ' + current.failure_count }) : null)
-          : h('p', { class: 'muted', text: 'Расписание не задано.' }),
-        h('div', { class: 'form' }, field('Включено', enabled), field('Действие', action), field('Режим', mode), variable),
-        h('p', { class: 'muted small', text: warnings ? 'Перед остановкой и рестартом игроки будут предупреждены (вкладка «Настройки»).' : 'Предупреждения игрокам не настроены (вкладка «Настройки»).' }),
-        h('div', { class: 'row end' },
-          current ? h('button', { class: 'danger', text: 'Удалить расписание', onclick: e => act(e.target, async () => {
-            if (!await ask('Удалить расписание?', { ok: 'Удалить' })) return;
-            await api('DELETE', `/servers/${enc(ctx.id)}/schedule`); toast('Удалено'); draw();
-          }) }) : null,
-          h('button', { class: 'primary', text: 'Сохранить', onclick: e => act(e.target, async () => {
-            const value = { action: action.value, enabled: enabled.checked, mode: mode.value };
-            if (mode.value === 'interval') value.interval_seconds = Math.round(+minutes.value * 60);
-            if (mode.value === 'daily') value.daily_time = daily.value;
-            if (mode.value === 'cron') { value.cron_expression = cron.value.trim(); value.timezone = zone.value.trim(); }
-            await api('PUT', `/servers/${enc(ctx.id)}/schedule`, value); toast('Сохранено'); draw();
-          }) }))));
+      [enabled, first, perDay, zone, minUptime].forEach(x => { x.oninput = x.onchange = showPreview; });
+      showPreview();
+
+      const warnings = s.warnings && s.warnings.steps && s.warnings.steps.length;
+      const save = h('button', { class: 'primary', text: 'Сохранить', onclick: e => act(e.target, async () => {
+        const [hh, mm] = first.value.split(':').map(Number);
+        const hours = hoursOf(hh, +perDay.value).sort((a, b) => a - b);
+        const [uh, um] = (minUptime.value || '00:00').split(':').map(Number);
+        const uptime = uh * 3600 + um * 60;
+        if (uptime !== (s.restart_min_uptime_seconds || 0)) await api('PATCH', `/servers/${enc(s.id)}`, { restart_min_uptime_seconds: uptime });
+        if (enabled.checked) {
+          await api('PUT', `/servers/${enc(s.id)}/schedule`, { action: 'restart', enabled: true, mode: 'cron', cron_expression: `${mm} ${hours.join(',')} * * *`, timezone: zone.value.trim() || 'UTC' });
+        } else if (current && !custom) {
+          await api('DELETE', `/servers/${enc(s.id)}/schedule`);
+        }
+        toast('Сохранено'); await ctx.refresh(); draw();
+      }) });
+
+      // A schedule the simple form cannot show stays editable as cron.
+      const action = h('select', {}, [['restart', 'Рестарт'], ['stop', 'Остановка'], ['start', 'Запуск']].map(([v, t]) => h('option', { value: v, text: t, selected: current ? current.action === v : v === 'restart' })));
+      const cron = h('input', { class: 'mono', value: custom && current.mode === 'cron' ? current.cron_expression : '0 6 * * *' });
+      const cronZone = h('input', { list: 'zones', value: current && current.timezone ? current.timezone : localZone });
+      const advanced = h('details', { open: custom },
+        h('summary', { text: 'Своё расписание (cron)' }),
+        h('p', { class: 'muted small', text: 'Для случаев, которые форма выше не покрывает: например, остановка на ночь и запуск утром (для этого нужны два расписания — сейчас на сервер одно). Формат: минута час день месяц день-недели; 0 — воскресенье. Пример: «30 4 * * 1» — по понедельникам в 04:30.' }),
+        custom ? h('div', { class: 'notice', text: `Сейчас задано своё расписание: ${current.mode === 'cron' ? current.cron_expression + ' (' + current.timezone + ')' : current.mode === 'daily' ? 'ежедневно в ' + current.daily_time + ' UTC' : 'каждые ' + Math.round(current.interval_seconds / 60) + ' мин'}, действие «${current.action}».` }) : null,
+        h('div', { class: 'form' }, field('Действие', action), field('Cron', cron), field('Часовой пояс', cronZone)),
+        h('div', { class: 'row end' }, h('button', { text: 'Сохранить своё расписание', onclick: e => act(e.target, async () => {
+          await api('PUT', `/servers/${enc(s.id)}/schedule`, { action: action.value, enabled: true, mode: 'cron', cron_expression: cron.value.trim(), timezone: cronZone.value.trim() || 'UTC' });
+          toast('Сохранено'); draw();
+        }) })));
+
+      replace(box,
+        h('datalist', { id: 'zones' }, zones.concat(zones.includes(localZone) ? [] : [localZone]).map(z => h('option', { value: z }))),
+        h('div', { class: 'panel' }, h('h2', { text: 'Автоматический рестарт' }),
+          current && current.enabled ? h('p', {}, 'Следующий: ', h('strong', { text: fmtTime(current.next_run) }), h('span', { class: 'muted', text: ' (' + fmtAgo(current.next_run) + ')' }),
+            current.failure_count ? h('span', { class: 'badge bad', style: 'margin-left:8px', text: 'ошибок подряд: ' + current.failure_count }) : null) : null,
+          h('div', { class: 'form' },
+            field('Рестарт каждый день', enabled),
+            field('Первый рестарт в', first, 'Остальные — через равные промежутки от этого времени.'),
+            field('Рестартов в сутки', perDay),
+            field('Часовой пояс', zone),
+            field('Минимальный аптайм (чч:мм)', minUptime, 'Если сервер запущен недавно (вручную или после падения), плановый рестарт пропускается. 00:00 — не проверять.')),
+          preview,
+          h('p', { class: 'muted small' }, warnings
+            ? `Перед рестартом игроки получат предупреждения за ${s.warnings.steps.map(x => x.minutes).sort((a, b) => b - a).join(', ')} мин. — если кто-то онлайн. `
+            : 'Предупреждения игрокам не настроены. ', h('a', { href: `#/server/${enc(s.id)}/settings`, text: 'Настроить' })),
+          h('div', { class: 'row end' }, save)),
+        h('div', { class: 'panel' }, advanced));
+
       try {
         const runs = await api('GET', `/servers/${enc(ctx.id)}/schedule/runs`);
         replace(runsBox, h('div', { class: 'panel' }, h('h2', { text: 'Последние запуски' }),
@@ -698,37 +807,85 @@ const TAB_VIEWS = {
   },
 
   async settings(body, ctx) {
-    let hooksInfo = { enabled: false, events: [], scripts: [] };
+    let hooksInfo = { enabled: false, events: [], scripts: [], dir: '' };
     try { hooksInfo = await api('GET', '/hooks'); } catch { /* shown as disabled */ }
     const s = ctx.detail.server;
-    const w = s.warnings || {};
+    const running = ['running', 'starting', 'stopping'].includes(ctx.detail.lifecycle.state);
+
+    // ----- manager and launch settings (the server record) -----
+    const knownMap = MAPS.some(([path]) => path === (s.map || MAPS[0][0]));
+    const mapSelect = h('select', {}, MAPS.map(([path, label]) => h('option', { value: path, text: label, selected: (s.map || MAPS[0][0]) === path })),
+      h('option', { value: 'custom', text: 'Свой путь…', selected: !knownMap }));
+    const mapPath = h('input', { class: 'mono', value: s.map || MAPS[0][0], style: knownMap ? 'display:none' : '' });
+    mapSelect.onchange = () => {
+      mapPath.style.display = mapSelect.value === 'custom' ? '' : 'none';
+      if (mapSelect.value !== 'custom') mapPath.value = mapSelect.value;
+    };
     const inputs = {
       name: h('input', { value: s.name }),
+      restart_on_crash: h('input', { type: 'checkbox', checked: s.restart_on_crash }),
+      auto_update: h('input', { type: 'checkbox', checked: s.auto_update }),
+      backup_on_stop: h('input', { type: 'checkbox', checked: s.backup_on_stop }),
       branch: h('input', { value: s.branch }),
       launch_args: h('input', { class: 'mono', value: s.launch_args }),
+      multihome: h('input', { value: s.multihome || '' }),
       game_port: h('input', { type: 'number', value: s.game_port }),
       query_port: h('input', { type: 'number', value: s.query_port }),
       periodic_backup_interval_seconds: h('input', { type: 'number', min: 0, value: s.periodic_backup_interval_seconds }),
-      restart_on_crash: h('input', { type: 'checkbox', checked: s.restart_on_crash }),
-      auto_update: h('input', { type: 'checkbox', checked: s.auto_update }),
     };
-    const warnMinutes = h('input', { placeholder: '15, 5, 1', value: (w.minutes || []).join(', ') });
-    const warnCommand = h('input', { placeholder: 'broadcast', value: w.command || '' });
-    const warnMessages = Object.fromEntries(['stop', 'restart', 'update'].map(a => [a, h('input', { value: (w.messages || {})[a] || '', placeholder: 'по умолчанию' })]));
+    const zombieOn = h('input', { type: 'checkbox', checked: s.zombie_check_seconds > 0 });
+    const zombieMinutes = h('input', { type: 'number', min: 1, max: 60, value: s.zombie_check_seconds > 0 ? Math.round(s.zombie_check_seconds / 60) : 5, style: 'width:90px' });
+
+    // ----- warnings -----
+    const w = s.warnings && s.warnings.steps && s.warnings.steps.length ? s.warnings : null;
+    const warnOn = h('input', { type: 'checkbox', checked: !!w });
+    const warnCommand = h('input', { value: (w && w.command) || 'broadcast', style: 'width:160px' });
+    const stepsBox = h('div');
+    const addStep = (minutes, message) => {
+      const m = h('input', { type: 'number', min: 1, max: 120, value: minutes, style: 'width:80px' });
+      const text = h('input', { value: message, style: 'flex:1' });
+      const row = h('div', { class: 'row step', style: 'margin-bottom:6px' }, h('span', { class: 'muted', text: 'за' }), m, h('span', { class: 'muted', text: 'мин.' }), text,
+        h('button', { class: 'ghost', text: '✕', title: 'Убрать', onclick: () => row.remove() }));
+      row.read = () => ({ minutes: +m.value, message: text.value.trim() });
+      stepsBox.append(row);
+    };
+    (w ? w.steps : DEFAULT_WARNINGS).slice().sort((a, b) => b.minutes - a.minutes).forEach(x => addStep(x.minutes, x.message || DEFAULT_WARNING_TEXT));
+    const warnBody = h('div', { style: w ? '' : 'display:none' }, stepsBox,
+      h('div', { class: 'row', style: 'margin:6px 0 12px' }, h('button', { text: '+ Шаг', onclick: () => addStep(1, DEFAULT_WARNING_TEXT) })),
+      h('div', { class: 'form' }, field('RCON-команда объявления', warnCommand, 'У Conan это broadcast.')),
+      h('p', { class: 'muted small', text: '{minutes} заменяется числом минут, {action} — словом «перезапущен», «остановлен» или «обновлён».' }));
+    warnOn.onchange = () => { warnBody.style.display = warnOn.checked ? '' : 'none'; };
+
+    // ----- Discord texts -----
+    const dm = s.discord_messages || {};
+    const discord = {
+      ready: h('input', { value: dm.ready || '' }),
+      restarted: h('input', { value: dm.restarted || '' }),
+      stopped: h('input', { value: dm.stopped || '' }),
+    };
+
+    // ----- hooks -----
     const datalist = h('datalist', { id: 'hook-scripts' }, hooksInfo.scripts.map(x => h('option', { value: x.name })));
-    const hookInputs = Object.fromEntries(hooksInfo.events.map(ev => [ev, h('input', { class: 'mono', list: 'hook-scripts', value: ((s.hooks || {})[ev] || []).join(', '), placeholder: '—' })]));
+    const hookInputs = Object.fromEntries(hooksInfo.events.map(ev => [ev, h('input', { class: 'mono', list: 'hook-scripts', value: ((s.hooks || {})[ev] || []).join(', ') })]));
     const list = text => text.split(',').map(x => x.trim()).filter(Boolean);
 
     const save = h('button', { class: 'primary', text: 'Сохранить', onclick: e => act(e.target, async () => {
       const patch = {};
       for (const [key, input] of Object.entries(inputs)) {
-        const value = input.type === 'checkbox' ? input.checked : input.type === 'number' ? +input.value : input.value;
-        if (value !== s[key]) patch[key] = value;
+        const value = input.type === 'checkbox' ? input.checked : input.type === 'number' ? +input.value : input.value.trim();
+        if (value !== (s[key] ?? (input.type === 'checkbox' ? false : ''))) patch[key] = value;
       }
-      const warnings = { minutes: list(warnMinutes.value).map(Number), command: warnCommand.value.trim() || undefined, messages: {} };
-      for (const [a, input] of Object.entries(warnMessages)) if (input.value.trim()) warnings.messages[a] = input.value.trim();
-      if (!Object.keys(warnings.messages).length) delete warnings.messages;
-      if (JSON.stringify(warnings) !== JSON.stringify({ minutes: w.minutes || [], command: w.command || undefined, messages: w.messages })) patch.warnings = warnings;
+      const map = mapSelect.value === 'custom' ? mapPath.value.trim() : mapSelect.value;
+      const mapValue = map === MAPS[0][0] ? '' : map;
+      if (mapValue !== (s.map || '')) patch.map = mapValue;
+      const zombie = zombieOn.checked ? Math.round(+zombieMinutes.value * 60) : 0;
+      if (zombie !== (s.zombie_check_seconds || 0)) patch.zombie_check_seconds = zombie;
+      const warnings = warnOn.checked
+        ? { steps: [...stepsBox.children].map(r => r.read()), command: warnCommand.value.trim() || 'broadcast' }
+        : { steps: [] };
+      if (JSON.stringify(warnings) !== JSON.stringify(w ? { steps: w.steps, command: w.command || 'broadcast' } : { steps: [] })) patch.warnings = warnings;
+      const messages = Object.fromEntries(Object.entries(discord).map(([k, i]) => [k, i.value.trim()]));
+      if (JSON.stringify(messages) !== JSON.stringify({ ready: dm.ready || '', restarted: dm.restarted || '', stopped: dm.stopped || '' })) patch.discord_messages = messages;
       if (hooksInfo.events.length) {
         const hooks = {};
         for (const [ev, input] of Object.entries(hookInputs)) { const scripts = list(input.value); if (scripts.length) hooks[ev] = scripts; }
@@ -753,39 +910,46 @@ const TAB_VIEWS = {
       toast('Сервер удалён'); location.hash = '#/';
     }) });
 
+    const gameBox = h('div', { class: 'panel' }, h('p', { class: 'muted', text: 'Загрузка настроек игры…' }));
     replace(body,
-      h('div', { class: 'panel' }, h('h2', { text: 'Сервер' }),
-        h('p', { class: 'muted small', text: 'Название, перезапуск при падении, автообновление, предупреждения и хуки меняются на ходу. Остальное — только на остановленном сервере.' }),
+      h('div', { class: 'panel' }, h('h2', { text: 'Менеджер' }),
+        h('p', { class: 'muted small', text: 'Эти настройки меняются на работающем сервере.' }),
         h('div', { class: 'form' },
-          field('Название', inputs.name),
-          field('Перезапускать при падении', inputs.restart_on_crash, 'До 3 раз за 30 минут, затем сервер остаётся выключенным.'),
-          field('Автообновление', inputs.auto_update, 'Новая сборка ставится сразу, с предупреждением игроков.'),
-          field('Ветка Steam', inputs.branch),
-          field('Аргументы запуска', inputs.launch_args, 'Порты передаются автоматически.'),
-          field('Игровой порт', inputs.game_port),
+          field('Название в менеджере', inputs.name),
+          field('Перезапускать при падении', inputs.restart_on_crash, 'До 3 раз за 30 минут, затем сервер остаётся выключенным и приходит уведомление.'),
+          field('Проверка на зомби', h('div', { class: 'row' }, zombieOn, zombieMinutes, h('span', { class: 'muted', text: 'мин. без ответа' })),
+            'Если процесс жив, но не отвечает на запросы Steam столько минут после загрузки — сервер останавливается (с проверкой базы) и запускается снова.'),
+          field('Автообновление', inputs.auto_update, 'Новая сборка ставится сразу после выхода, с предупреждением игроков и бэкапом.'),
+          field('Бэкап при остановке', inputs.backup_on_stop, 'Копия мира в бэкапы менеджера после каждой нормальной остановки.'))),
+      h('div', { class: 'panel' }, h('h2', { text: 'Запуск' }),
+        h('p', { class: 'muted small', text: 'Меняются только на остановленном сервере.' }),
+        h('div', { class: 'form' },
+          field('Карта', h('div', { class: 'row' }, mapSelect, mapPath)),
+          field('Игровой порт', inputs.game_port, 'Игра занимает этот порт и следующий (Raw UDP).'),
           field('Query-порт', inputs.query_port),
-          field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 — как в игре. Пишется в Game.ini перед стартом.'))),
-      h('div', { class: 'panel' }, h('h2', { text: 'Предупреждения игрокам' }),
-        h('p', { class: 'muted small', text: 'Перед плановой остановкой, рестартом и автообновлением. Если на сервере никого нет, действие выполняется сразу.' }),
+          field('Multihome (IP)', inputs.multihome, 'Пусто — слушать все адреса.'),
+          field('Ветка Steam', inputs.branch),
+          field('Доп. аргументы запуска', inputs.launch_args, 'Порты, карта и multihome передаются автоматически.'),
+          field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 — как в игре. Пишется в Game.ini перед стартом; каждый бэкап копирует базу целиком.'))),
+      gameBox,
+      h('div', { class: 'panel' }, h('h2', { text: 'Предупреждения игрокам (RCON)' }),
+        h('p', { class: 'muted small', text: 'Перед плановым рестартом или остановкой, автообновлением и рестартом с галочкой «предупредить». Если на сервере никого нет — действие сразу, без ожидания. Нужен включённый RCON (раздел выше).' }),
+        h('div', { class: 'form' }, field('Предупреждать игроков', warnOn)), warnBody),
+      h('div', { class: 'panel' }, h('h2', { text: 'Тексты для Discord' }),
+        h('p', { class: 'muted small' }, 'Добавляются к стандартному уведомлению этого сервера. Пусто — только стандартный заголовок. Куда слать — на странице ', h('a', { href: '#/notifications', text: 'Уведомления' }), '.'),
         h('div', { class: 'form' },
-          field('За сколько минут', warnMinutes, 'Через запятую; пусто — не предупреждать.'),
-          field('Текст перед остановкой', warnMessages.stop, '{minutes} заменяется числом минут.'),
-          field('Текст перед рестартом', warnMessages.restart),
-          field('Текст перед обновлением', warnMessages.update),
-          field('RCON-команда', warnCommand, 'По умолчанию broadcast.'))),
-      h('div', { class: 'panel' }, h('h2', { text: 'Хуки' }),
-        hooksInfo.enabled ? h('p', { class: 'muted small' }, 'Скрипты из ', h('span', { class: 'mono', text: hooksInfo.dir }), ` (владелец root). Доступно: ${hooksInfo.scripts.map(x => x.name).join(', ') || 'нет'}. Несколько — через запятую.`)
-          : h('p', { class: 'muted', text: 'Хуки отключены на этом менеджере.' }),
-        datalist,
-        hooksInfo.enabled ? h('div', { class: 'form' }, Object.entries(hookInputs).map(([ev, input]) => field(ev, input))) : null),
-      h('div', { class: 'row end' }, save),
+          field('Сервер готов', discord.ready), field('Сервер перезапущен', discord.restarted), field('Сервер остановлен', discord.stopped))),
+      h('div', { class: 'panel' }, h('h2', { text: 'Скрипты (хуки)' }), hooksHelp(hooksInfo), datalist,
+        hooksInfo.enabled ? h('div', { class: 'form' }, Object.entries(hookInputs).map(([ev, input]) => field(HOOK_LABELS[ev] || ev, input))) : null),
+      h('div', { class: 'row end', style: 'margin-bottom:16px' }, save),
       h('h3', { text: 'Опасная зона' }),
       h('div', { class: 'panel' }, h('div', { class: 'row' },
         h('button', { text: 'Установить / проверить файлы', disabled: ctx.detail.lifecycle.state !== 'idle', onclick: e => act(e.target, async () => {
           if (!await ask('Запустить SteamCMD для этого сервера? Сервер должен быть остановлен.', { ok: 'Запустить', danger: false })) return;
           await runJob(await api('POST', `/servers/${enc(s.id)}/install`)); ctx.refresh();
         }) }),
-        h('span', { style: 'flex:1' }), deleteButton)));
+        h('span', { class: 'spacer' }), deleteButton)));
+    replace(gameBox, await gameSettings(ctx, running, () => TAB_VIEWS.settings(body, ctx)));
   },
 
   async history(body, ctx) {
@@ -863,9 +1027,16 @@ async function viewNotifications() {
     name.focus();
   };
   replace(app,
-    h('div', { class: 'head' }, h('h1', { text: 'Уведомления' }), h('span', { class: 'spacer' }),
-      h('button', { class: 'primary', text: 'Добавить канал', onclick: () => showForm(null) })),
-    formBox, h('div', { class: 'panel' }, listBox));
+    h('div', { class: 'head' }, h('h1', { text: 'Уведомления' }),
+      h('button', { class: 'primary', text: '+ Добавить канал', onclick: () => showForm(null) })),
+    formBox, h('div', { class: 'panel' }, listBox),
+    h('div', { class: 'panel' }, h('h2', { text: 'Как настроить' }), h('ol', { class: 'small' },
+      h('li', {}, 'В Discord: настройки канала → Интеграции → Вебхуки → Новый вебхук → «Копировать URL».'),
+      h('li', {}, 'Здесь: «Добавить канал», вставьте URL. Выберите сервер (или все) и уровень: «Предупреждения и ошибки» — падения, зависания, ошибки бэкапов и обновлений, повреждённая база; «Всё» — ещё запуски, остановки, готовность, бэкапы.'),
+      h('li', {}, 'Нужны отдельные события при уровне «только ошибки» — впишите их в «Дополнительные события», например server.ready, server.restarted.'),
+      h('li', {}, 'Упоминание (<@&ID роли>, @here) ставится только к ошибкам, чтобы не будить людей из-за обычных рестартов.'),
+      h('li', {}, 'Нажмите «Тест». Ошибка отправки показывается в списке каналов. Если хост не видит Discord (блокировка), укажите прокси в CONAN_MANAGER_NOTIFY_PROXY.'),
+      h('li', {}, 'Свои тексты «Сервер готов / перезапущен / остановлен» задаются у каждого сервера во вкладке «Настройки». Предупреждения игрокам в игре — там же, раздел RCON.'))));
   await draw();
 }
 
