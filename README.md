@@ -1247,7 +1247,7 @@ sudo ./install.sh --domain manager.example.com
 же пользователем, который потом запускает `git clone` (без `sudo`):
 
 ```bash
-ssh-keygen -t ed25519            # Enter на все вопросы
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""   # ничего не спрашивает
 cat ~/.ssh/id_ed25519.pub        # открытый ключ: строка ssh-ed25519 AAAA...
 ```
 
