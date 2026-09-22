@@ -840,13 +840,14 @@ const LOG_LEVELS = [
 ];
 
 // gameLogLevels edits [Core.Log] of Engine.ini: one row per log category
-// with its level, the recommended categories first, then the operator's own.
+// with its level, the recommended categories first, then the operator's own,
+// and an empty row at the end for a new one.
 function gameLogLevels(ctx, running, reload, views, recommended) {
   if (views instanceof Error) return h('div', { class: 'notice bad', text: 'Не удалось прочитать Engine.ini: ' + views.message });
   const section = (views.Engine.sections || []).find(s => s.name.toLowerCase() === 'core.log');
   const stored = new Map((section ? section.entries : []).map(e => [e.key.toLowerCase(), e]));
   const known = new Set(recommended.map(c => c.name.toLowerCase()));
-  const rows = [];   // { name, select, custom, stored }
+  const rows = [];   // { name(), select, stored }
   const list = h('div', { class: 'log-levels' });
 
   const levelSelect = (value, recommendedLevel) => {
@@ -859,14 +860,31 @@ function gameLogLevels(ctx, running, reload, views, recommended) {
     select.value = match ? match[0] : (value || '');
     return select;
   };
+  const removeButton = (row, line) => h('button', { class: 'ghost icon-button', text: '×', title: 'Убрать категорию', disabled: running, onclick: () => {
+    rows.splice(rows.indexOf(row), 1);
+    line.remove();
+    if (!rows.some(r => r.blank)) addBlank();
+  } });
   const addRow = (name, value, recommendedLevel, custom) => {
-    const select = levelSelect(value, recommendedLevel);
-    const row = { name, select, custom, stored: value };
-    const remove = custom ? h('button', { class: 'ghost icon-button', text: '×', title: 'Убрать категорию', disabled: running, onclick: () => {
-      rows.splice(rows.indexOf(row), 1);
-      line.remove();
-    } }) : null;
-    const line = h('div', { class: 'log-level' }, h('label', { class: 'mono', text: name, title: name }), h('div', { class: 'setting-row' }, select, remove));
+    const row = { name: () => name, select: levelSelect(value, recommendedLevel), stored: value };
+    const line = h('div', { class: 'log-level' }, h('label', { class: 'mono', text: name, title: name }), row.select, h('span'));
+    if (custom) line.lastChild.replaceWith(removeButton(row, line));
+    rows.push(row);
+    list.append(line);
+  };
+  // The empty row: typing a name into it turns it into a new category and
+  // opens another empty row below.
+  const addBlank = () => {
+    const input = h('input', { class: 'mono', placeholder: 'Своя категория, например LogMyMod', disabled: running, autocomplete: 'off', spellcheck: 'false' });
+    const row = { name: () => input.value.trim(), select: levelSelect('', null), stored: null, blank: true };
+    const line = h('div', { class: 'log-level' }, input, row.select, h('span'));
+    input.oninput = () => {
+      if (!row.blank || !input.value.trim()) return;
+      row.blank = false;
+      if (!row.select.value) row.select.value = 'Warning';
+      line.lastChild.replaceWith(removeButton(row, line));
+      addBlank();
+    };
     rows.push(row);
     list.append(line);
   };
@@ -877,46 +895,39 @@ function gameLogLevels(ctx, running, reload, views, recommended) {
   for (const e of (section ? section.entries : [])) {
     if (!known.has(e.key.toLowerCase())) addRow(e.key, e.value, null, true);
   }
-
-  const newName = h('input', { class: 'mono', placeholder: 'LogMyMod', disabled: running, autocomplete: 'off', spellcheck: 'false' });
-  const newLevel = levelSelect('Warning', null);
-  const add = h('button', { text: '+ Добавить', disabled: running, onclick: () => {
-    const name = newName.value.trim();
-    if (!/^[A-Za-z0-9_.]+$/.test(name)) { toast('Название категории - латиница, цифры, _ и точка', 'bad'); return; }
-    if (rows.some(r => r.name.toLowerCase() === name.toLowerCase())) { toast('Такая категория уже есть', 'bad'); return; }
-    addRow(name, newLevel.value, null, true);
-    rows[rows.length - 1].stored = null;
-    rows[rows.length - 1].select.value = newLevel.value;
-    newName.value = '';
-  } });
-  newName.addEventListener('keydown', e => { if (e.key === 'Enter') add.click(); });
+  addBlank();
 
   const recommend = h('button', { text: 'Как рекомендуется', disabled: running, onclick: () => {
     const levels = new Map(recommended.map(c => [c.name.toLowerCase(), c.level]));
-    for (const r of rows) if (levels.has(r.name.toLowerCase())) r.select.value = levels.get(r.name.toLowerCase());
+    for (const r of rows) if (levels.has(r.name().toLowerCase())) r.select.value = levels.get(r.name().toLowerCase());
     toast('Выставлены рекомендуемые уровни - сохраните', 'info');
   } });
   const save = h('button', { class: 'primary', text: 'Сохранить уровни логов', disabled: running, onclick: e => act(e.target, async () => {
+    const named = rows.filter(r => r.name());
+    const seen = new Set();
+    for (const r of named) {
+      if (!/^[A-Za-z0-9_.]+$/.test(r.name())) throw new Error(`«${r.name()}»: название категории - латиница, цифры, _ и точка`);
+      if (seen.has(r.name().toLowerCase())) throw new Error(`Категория ${r.name()} указана дважды`);
+      seen.add(r.name().toLowerCase());
+    }
     const set = {}, remove = [];
-    const kept = new Set(rows.map(r => r.name.toLowerCase()));
-    for (const r of rows) {
+    for (const r of named) {
       if (r.select.value === (r.stored || '')) continue;
-      if (r.select.value) set[r.name] = r.select.value; else if (r.stored) remove.push(r.name);
+      if (r.select.value) set[r.name()] = r.select.value; else if (r.stored) remove.push(r.name());
     }
     // Custom categories removed from the list go from the file too.
-    for (const [key, entry] of stored) if (!kept.has(key)) remove.push(entry.key);
+    for (const [key, entry] of stored) if (!seen.has(key)) remove.push(entry.key);
     if (!Object.keys(set).length && !remove.length) { toast('Изменений нет', 'info'); return; }
     await api('PATCH', `/servers/${enc(ctx.id)}/config/Engine`, { set: Object.keys(set).length ? { 'Core.Log': set } : undefined,
       remove: remove.length ? { 'Core.Log': remove } : undefined });
     toast('Уровни логов сохранены'); reload();
   }) });
 
-  return h('div', {}, h('h2', { text: 'Логи игры' }),
+  return h('div', {},
     running ? h('div', { class: 'notice', text: 'Сервер работает: уровни меняются только на остановленном сервере - игра переписывает Engine.ini при остановке.' })
-      : h('p', { class: 'muted small', text: 'Сколько игра пишет в ConanSandbox.log по каждой категории ([Core.Log] в Engine.ini). С уровнями игры по умолчанию лог вырастает до гигабайтов; рекомендуемые - как у Dedicated Server Launcher. Вступают в силу при следующем запуске.' }),
+      : h('p', { class: 'muted small', text: 'Сколько игра пишет в ConanSandbox.log по каждой категории ([Core.Log] в Engine.ini). С уровнями игры по умолчанию лог вырастает до гигабайтов; рекомендуемые - как у Dedicated Server Launcher. Свою категорию впишите в пустую строку внизу. Вступают в силу при следующем запуске.' }),
     list,
-    h('div', { class: 'row', style: 'margin-top:10px' }, newName, newLevel, add),
-    h('div', { class: 'row end', style: 'margin-top:10px' }, recommend, h('span', { class: 'spacer' }), save));
+    h('div', { class: 'row end', style: 'margin-top:12px' }, recommend, h('span', { class: 'spacer' }), save));
 }
 
 // ---------- server page ----------
@@ -1182,15 +1193,25 @@ const TAB_VIEWS = {
     const box = h('div');
     const draw = async () => {
       const running = ['running', 'starting', 'stopping'].includes(ctx.detail.lifecycle.state);
+      const switches = extra => h('div', { class: 'row', style: 'margin-bottom:12px' },
+        [['ServerSettings', 'ServerSettings.ini'], ['Game', 'Game.ini'], ['Engine', 'Engine.ini'], ['logs', 'Уровни логов']]
+          .map(([f, label]) => h('button', { class: f === file ? 'primary' : '', text: label, onclick: () => { file = f; draw(); } })),
+        extra);
+      if (file === 'logs') {
+        let engine, categories;
+        try { [engine, categories] = await Promise.all([api('GET', `/servers/${enc(ctx.id)}/config/Engine`), cached('/game-log-categories')]); }
+        catch (e) { replace(box, switches(), h('div', { class: 'notice bad', text: e.message })); return; }
+        replace(box, switches(h('span', { class: 'muted small mono', style: 'margin-left:8px', text: engine.path })),
+          h('div', { class: 'panel' }, gameLogLevels(ctx, running, draw, { Engine: engine }, categories)));
+        return;
+      }
       let view;
       try { view = await api('GET', `/servers/${enc(ctx.id)}/config/${file}`); }
       catch (e) { replace(box, h('div', { class: 'notice bad', text: e.message })); return; }
       const text = h('textarea', { value: view.content, disabled: running, spellcheck: 'false', autocapitalize: 'off', autocomplete: 'off' });
       const editor = iniEditor(text);
       replace(box,
-        h('div', { class: 'row', style: 'margin-bottom:12px' },
-          ['ServerSettings', 'Game', 'Engine'].map(f => h('button', { class: f === file ? 'primary' : '', text: f + '.ini', onclick: () => { file = f; draw(); } })),
-          h('span', { class: 'muted small mono', style: 'margin-left:8px', text: view.path })),
+        switches(h('span', { class: 'muted small mono', style: 'margin-left:8px', text: view.path })),
         await versionsPanel(running),
         running ? h('div', { class: 'notice', text: 'Сервер работает: править можно только после остановки. Игра читает файлы при старте и переписывает при остановке - правка на ходу потерялась бы.' }) : null,
         !view.exists ? h('div', { class: 'notice', text: 'Файла ещё нет: игра создаст его при первом запуске. Можно написать его заранее.' }) : null,
@@ -1367,11 +1388,10 @@ const TAB_VIEWS = {
 
   async settings(body, ctx) {
     // One round trip instead of one per request: over a slow link they add up.
-    const [hooksInfo, kindsList, gameViews, logCategories] = await Promise.all([
+    const [hooksInfo, kindsList, gameViews] = await Promise.all([
       cached('/hooks').catch(() => ({ enabled: false, events: [], scripts: [], dir: '' })),
       cached('/message-kinds').catch(() => []),
       loadGameViews(ctx).catch(e => e),
-      cached('/game-log-categories').catch(() => []),
     ]);
     const s = ctx.detail.server;
     const running = ['running', 'starting', 'stopping'].includes(ctx.detail.lifecycle.state);
@@ -1487,7 +1507,6 @@ const TAB_VIEWS = {
     }) });
 
     const gameBox = h('div', { class: 'panel' }, gameSettings(ctx, running, () => TAB_VIEWS.settings(body, ctx), gameViews));
-    const logsBox = h('div', { class: 'panel' }, gameLogLevels(ctx, running, () => TAB_VIEWS.settings(body, ctx), gameViews, logCategories));
     replace(body,
       h('div', { class: 'panel' }, h('h2', { text: 'Менеджер' }),
         h('p', { class: 'muted small', text: 'Настройки менеджера' }),
@@ -1510,7 +1529,6 @@ const TAB_VIEWS = {
           field('Доп. аргументы запуска', inputs.launch_args, 'Порты, карта и multihome передаются автоматически.'),
           field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 - как в игре. Пишется в Game.ini перед стартом; каждый бэкап копирует базу целиком.'))),
       gameBox,
-      logsBox,
       h('div', { class: 'panel' }, h('h2', { text: 'Оповещения' }),
         h('p', { class: 'muted small' }, 'В игру - через RCON (нужен включённый RCON в «Настройках игры»), всегда, даже если никого нет. В Discord, Telegram и на свои адреса - в каналы, которые берут это сообщение (страница ', h('a', { href: '#/notifications', text: 'Уведомления' }), '). Эмодзи и коды вида :warning: остаются только там: в игру текст уходит без них - шрифт игры их не рисует.'),
         h('div', { class: 'form' },
