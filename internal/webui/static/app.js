@@ -649,6 +649,16 @@ async function viewEvents() {
 
 // ---------- new server ----------
 
+// serverSlug turns a name into a server ID: Russian letters transliterated,
+// everything else not allowed in an ID turned into dashes.
+const TRANSLIT = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l',
+  м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch',
+  ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya' };
+function serverSlug(name) {
+  return [...name.toLowerCase()].map(ch => TRANSLIT[ch] ?? ch).join('')
+    .replace(/[^a-z0-9_-]+/g, '-').replace(/-{2,}/g, '-').replace(/^[-_]+|[-_]+$/g, '').slice(0, 64).replace(/[-_]+$/, '');
+}
+
 async function viewNewServer() {
   let existing = [];
   try { existing = await api('GET', '/servers'); } catch { existing = []; }
@@ -657,8 +667,8 @@ async function viewNewServer() {
   let game = 7777; while (used.has(game) || used.has(game + 1)) game += 10;
   let query = 27015; while (used.has(query)) query += 10;
 
-  const id = h('input', { placeholder: 'server-1', required: true, pattern: '[A-Za-z0-9][A-Za-z0-9_-]{0,63}' });
-  const name = h('input', { value: 'Conan Exiles' });
+  const id = h('input', { class: 'mono', placeholder: 'server-1', required: true, pattern: '[A-Za-z0-9][A-Za-z0-9_-]{0,63}', spellcheck: 'false', autocomplete: 'off' });
+  const name = h('input', { placeholder: 'Мой сервер', autocomplete: 'off' });
   const install = h('input', { placeholder: '/var/lib/conan-manager/servers/server-1/game' });
   const steam = h('input', { value: '/var/lib/conan-manager/steamcmd' });
   const branch = h('input', { value: 'public' });
@@ -671,6 +681,18 @@ async function viewNewServer() {
   let installTouched = false;
   install.oninput = () => { installTouched = true; };
   id.oninput = () => { if (!installTouched) install.value = id.value ? `/var/lib/conan-manager/servers/${id.value}/game` : ''; };
+  // The ID follows the name until the operator edits it.
+  let idTouched = false;
+  id.addEventListener('input', e => { if (e.isTrusted) idTouched = true; });
+  const taken = new Set(existing.map(s => s.id.toLowerCase()));
+  name.oninput = () => {
+    if (idTouched) return;
+    const base = serverSlug(name.value);
+    let candidate = base, n = 2;
+    while (base && taken.has(candidate)) candidate = `${base.slice(0, 60)}-${n++}`;
+    id.value = candidate;
+    id.oninput();
+  };
   const create = h('button', { class: 'primary', text: 'Создать' });
   create.onclick = e => act(e.target, async () => {
     const config = {
@@ -688,8 +710,8 @@ async function viewNewServer() {
   replace(app,
     h('div', { class: 'head' }, h('a', { href: '#/', text: '← Серверы' }), h('h1', { text: 'Новый сервер' })),
     h('div', { class: 'panel' }, h('div', { class: 'form' },
-      field('ID', id, 'Латиница, цифры, - и _. Входит в имя systemd-юнита и пути; изменить потом нельзя.'),
-      field('Название', name),
+      field('Название', name, 'Как сервер называется в менеджере и в списке серверов игры. Можно по-русски.'),
+      field('ID', id, 'Заполняется из названия: латиница в нижнем регистре, цифры, - и _. Входит в имя systemd-юнита и пути; изменить потом нельзя.'),
       field('Каталог установки', install, 'Может быть на отдельном диске.'),
       field('Каталог SteamCMD', steam, 'Общий для всех серверов.'),
       field('Ветка', branch),
