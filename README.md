@@ -1243,10 +1243,25 @@ scripts/build.sh                                  # бинарники в bin/
 sudo ./install.sh --domain manager.example.com
 ```
 
-Репозиторий приватный: на сервере создайте ключ (`ssh-keygen -t ed25519`),
-добавьте `~/.ssh/id_ed25519.pub` в GitHub → Settings → Deploy keys (без права
-записи) и клонируйте по SSH:
-`git clone -b server-management git@github.com:Myp3uK/ConanLinuxManager.git`.
+Репозиторий приватный, поэтому клонируется по SSH-ключу. Ключ создаётся тем
+же пользователем, который потом запускает `git clone` (без `sudo`):
+
+```bash
+ssh-keygen -t ed25519            # Enter на все вопросы
+cat ~/.ssh/id_ed25519.pub        # открытый ключ: строка ssh-ed25519 AAAA...
+```
+
+Ключ лежит в домашней папке: `~/.ssh/id_ed25519` - закрытый, остаётся на
+сервере; `~/.ssh/id_ed25519.pub` - открытый. Строку открытого ключа целиком
+вставьте в GitHub → репозиторий → Settings → Deploy keys → Add deploy key
+(«Allow write access» не отмечать), затем:
+
+```bash
+git clone -b server-management git@github.com:Myp3uK/ConanLinuxManager.git
+```
+
+При первом подключении git спросит, доверять ли github.com: ответьте `yes`.
+Если `sudo git clone` - git возьмёт ключи root, а не ваши, и GitHub откажет.
 
 Go и исходники после установки не нужны: менеджер работает из
 `/opt/conan-manager`.
