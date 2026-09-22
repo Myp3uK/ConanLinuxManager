@@ -822,7 +822,7 @@ function gameLogLevels(ctx, running, reload, views, recommended) {
   const stored = new Map((section ? section.entries : []).map(e => [e.key.toLowerCase(), e]));
   const known = new Set(recommended.map(c => c.name.toLowerCase()));
   const rows = [];   // { name, select, custom, stored }
-  const list = h('div', { class: 'form log-levels' });
+  const list = h('div', { class: 'log-levels' });
 
   const levelSelect = (value, recommendedLevel) => {
     const select = h('select', { disabled: running },
@@ -839,12 +839,11 @@ function gameLogLevels(ctx, running, reload, views, recommended) {
     const row = { name, select, custom, stored: value };
     const remove = custom ? h('button', { class: 'ghost icon-button', text: '×', title: 'Убрать категорию', disabled: running, onclick: () => {
       rows.splice(rows.indexOf(row), 1);
-      label.remove(); cell.remove();
+      line.remove();
     } }) : null;
-    const label = h('label', { class: 'mono', text: name });
-    const cell = h('div', { class: 'setting-row' }, select, remove);
+    const line = h('div', { class: 'log-level' }, h('label', { class: 'mono', text: name, title: name }), h('div', { class: 'setting-row' }, select, remove));
     rows.push(row);
-    list.append(label, cell);
+    list.append(line);
   };
   for (const c of recommended) {
     const e = stored.get(c.name.toLowerCase());
