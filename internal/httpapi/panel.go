@@ -12,7 +12,11 @@ import (
 
 // me tells the interface who is logged in.
 func (a *api) me(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"username": currentUser(r), "can_restart": a.control.RestartManager != nil})
+	out := map[string]any{"username": currentUser(r), "can_restart": a.control.RestartManager != nil}
+	if s := currentSession(r); s != nil {
+		out["csrf"], out["session"] = s.CSRF, s.ID
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *api) adminList(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +64,7 @@ func (a *api) admin(w http.ResponseWriter, r *http.Request) {
 			a.adminError(w, r, err)
 			return
 		}
+		a.auth.sessions.Forget()
 		a.logger.Info("administrator removed", "by", currentUser(r), "username", name)
 		w.WriteHeader(http.StatusNoContent)
 	case sub == "password" && r.Method == http.MethodPut:
@@ -73,6 +78,12 @@ func (a *api) admin(w http.ResponseWriter, r *http.Request) {
 		if err := a.admins.SetPassword(r.Context(), name, in.Password); err != nil {
 			a.adminError(w, r, err)
 			return
+		}
+		// The new password ends every session made with the old one,
+		// including the caller's own, which is renewed here.
+		a.auth.sessions.Forget()
+		if name == currentUser(r) {
+			a.renewOwnSession(w, r)
 		}
 		a.logger.Info("administrator password changed", "by", currentUser(r), "username", name)
 		w.WriteHeader(http.StatusNoContent)
@@ -183,6 +194,11 @@ func (a *api) panelSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			a.logger.Info("panel setting changed", "by", currentUser(r), "key", key, "reset", value == nil)
+			if value == nil {
+				noteAudit(r, "", key+" reset")
+			} else {
+				noteAudit(r, "", key)
+			}
 		}
 		if _, touched := in["CONAN_MANAGER_NOTIFY_PROXY"]; touched {
 			values, err := a.settings.Values(r.Context())

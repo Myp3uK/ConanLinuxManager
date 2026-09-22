@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/example/conan-manager/internal/audit"
 	"github.com/example/conan-manager/internal/config"
 	"github.com/example/conan-manager/internal/controller"
 	"github.com/example/conan-manager/internal/eventlog"
@@ -44,6 +46,9 @@ type api struct {
 	// with, to tell which saved changes still wait for a restart.
 	startup map[string]string
 	started time.Time
+	auth    *authn
+	audit   *audit.Log
+	cfg     config.Config
 }
 
 func New(db *store.Store, logger *slog.Logger) http.Handler {
@@ -104,7 +109,10 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	a := &api{repo: repo, control: control, logger: logger, detail: cfg.ExposeErrorDetail,
 		history: history, channels: channels, notifier: notifier,
 		admins: panel.NewAdmins(db.DB(), cfg.AdminUsername, cfg.AdminPassword), settings: panel.NewStore(db.DB()),
-		startup: map[string]string{}, started: time.Now().UTC()}
+		startup: map[string]string{}, started: time.Now().UTC(), audit: audit.New(db.DB()), cfg: cfg}
+	sessions := panel.NewSessions(db.DB(), a.admins)
+	sessions.IdleFor, sessions.MaxAge = cfg.SessionIdle, cfg.SessionMaxAge
+	a.auth = &authn{admins: a.admins, sessions: sessions, logins: newLoginGuard(), audit: a.audit, logger: logger, basic: cfg.BasicAuth}
 	if stored, err := a.settings.Values(context.Background()); err == nil {
 		lookup := panel.Overlay(stored, os.Getenv)
 		for _, s := range panel.Settings {
@@ -136,6 +144,12 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	mux.HandleFunc("/api/v1/servers/", a.routeServer)
 	mux.HandleFunc("/api/v1/servers", a.servers)
 	mux.HandleFunc("GET /api/v1/me", a.me)
+	mux.HandleFunc("POST /api/v1/login", a.login)
+	mux.HandleFunc("POST /api/v1/logout", a.logout)
+	mux.HandleFunc("/api/v1/sessions", a.sessionRoutes)
+	mux.HandleFunc("/api/v1/sessions/", a.sessionRoutes)
+	mux.HandleFunc("GET /api/v1/security", a.security)
+	mux.HandleFunc("GET /api/v1/audit", a.auditLog)
 	mux.HandleFunc("/api/v1/admins", a.adminList)
 	mux.HandleFunc("/api/v1/admins/", a.admin)
 	mux.HandleFunc("/api/v1/panel/settings", a.panelSettings)
@@ -144,9 +158,13 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	// assets, behind the same authentication as the API.
 	mux.Handle("/", webui.Handler())
 
+	// Outermost first: security headers and the Origin check, then the
+	// allowlist and rate limit, then the login, then the audit trail.
 	handler := logging(mux, logger)
+	handler = a.auth.auditTrail(handler)
+	handler = a.auth.middleware(handler)
+	handler = guard(handler, Access{Allowed: cfg.AllowedIPs, TrustedProxies: cfg.TrustedProxies}, newRateLimiter(20, 200))
 	handler = requestProtection(handler, cfg.AllowedOrigin)
-	handler = BasicAuth(a.admins)(handler)
 	return handler, control
 }
 
@@ -712,6 +730,7 @@ func (a *api) patchServer(w http.ResponseWriter, r *http.Request, id string) {
 		a.fail(w, r, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
+	noteAudit(r, "", setFields(patch))
 	updated, err := a.control.UpdateConfig(r.Context(), id, func(cfg *server.Config) {
 		assign(&cfg.Name, patch.Name)
 		assign(&cfg.Branch, patch.Branch)
@@ -846,7 +865,8 @@ func (a *api) serverAction(w http.ResponseWriter, r *http.Request, id, action st
 			return
 		}
 		// A console command can do anything an admin can in game; keep a trace.
-		a.logger.Info("rcon command", "server", id, "command", body.Command, "remote", r.RemoteAddr)
+		a.logger.Info("rcon command", "server", id, "command", body.Command, "remote", clientIP(r))
+		noteAudit(r, "", body.Command)
 		out, err := a.control.Rcon(r.Context(), id, body.Command)
 		if err != nil {
 			a.fail(w, r, http.StatusConflict, err)
@@ -981,11 +1001,39 @@ func (a *api) serverAction(w http.ResponseWriter, r *http.Request, id, action st
 	})
 }
 
+// setFields names the fields a patch sets, for the audit log; the values
+// may be secrets and are left out.
+func setFields(patch any) string {
+	v := reflect.ValueOf(patch)
+	var names []string
+	for i := 0; i < v.NumField(); i++ {
+		if f := v.Field(i); f.Kind() == reflect.Pointer && !f.IsNil() {
+			name, _, _ := strings.Cut(v.Type().Field(i).Tag.Get("json"), ",")
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+// auditLog serves GET /audit?user=&target=&failed=1&before=&limit=.
+func (a *api) auditLog(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	before, _ := strconv.ParseInt(q.Get("before"), 10, 64)
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	list, err := a.audit.Query(r.Context(), audit.Query{Username: q.Get("user"), Target: q.Get("target"),
+		Failed: q.Get("failed") == "1", Before: before, Limit: limit})
+	if err != nil {
+		a.fail(w, r, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
 func logging(next http.Handler, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		next.ServeHTTP(w, r)
-		logger.Info("http request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(started))
+		logger.Info("http request", "method", r.Method, "path", r.URL.Path, "ip", clientIP(r), "user", currentUser(r), "duration", time.Since(started))
 	})
 }
 

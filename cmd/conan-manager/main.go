@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -56,6 +57,15 @@ func main() {
 		logger.Info("panel settings applied", "count", len(stored))
 	}
 
+	// A mistyped allowlist or half a TLS setup would leave the manager more
+	// open than the operator meant; it does not start until they are fixed.
+	if len(cfg.Problems) > 0 {
+		for _, p := range cfg.Problems {
+			logger.Error("invalid setting", "problem", p)
+		}
+		os.Exit(1)
+	}
+
 	handler, control := httpapi.NewManaged(db, logger, cfg)
 	server := &http.Server{
 		Addr:              cfg.ListenAddress,
@@ -64,6 +74,7 @@ func main() {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -86,8 +97,15 @@ func main() {
 	}
 
 	serveDone := make(chan error, 1)
-	logger.Info("conan manager started", "listen", cfg.ListenAddress, "database", cfg.DatabasePath)
-	go func() { serveDone <- server.ListenAndServe() }()
+	logger.Info("conan manager started", "listen", cfg.ListenAddress, "database", cfg.DatabasePath,
+		"https", cfg.TLSCert != "", "allowed_ips", len(cfg.AllowedIPs), "trusted_proxies", len(cfg.TrustedProxies))
+	go func() {
+		if cfg.TLSCert != "" {
+			serveDone <- server.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey)
+			return
+		}
+		serveDone <- server.ListenAndServe()
+	}()
 	serveFailed := false
 	select {
 	case <-ctx.Done():

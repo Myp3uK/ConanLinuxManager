@@ -256,14 +256,25 @@ Chrome на живом node2 сценарием из 10 шагов: бэкап, 
 
 ## 6. Production security
 
-- [ ] Заменить Basic Auth на session authentication.
-- [ ] Добавить CSRF tokens для browser mutations (сейчас - проверка `Origin`
-      на изменяющих запросах).
-- [ ] Подготовить HTTPS/reverse-proxy deployment.
-- [ ] Добавить IP allowlist.
-- [ ] Добавить rate limiting.
-- [ ] Добавить audit log для lifecycle, configuration, backup и recovery actions.
+- [x] Заменить Basic Auth на session authentication: окно входа, сессии в
+      SQLite (только хеш токена), выход по бездействию и предельный срок,
+      завершение сессий при смене пароля и удалении администратора, список
+      сессий в панели. Basic Auth остался для скриптов (`CONAN_MANAGER_BASIC_AUTH`).
+- [x] Добавить CSRF tokens для browser mutations: токен сессии в
+      `X-CSRF-Token` плюс проверка `Origin`, cookie `SameSite=Strict`.
+- [x] Подготовить HTTPS/reverse-proxy deployment: примеры nginx и Caddy,
+      `CONAN_MANAGER_TRUSTED_PROXIES`, TLS в самом менеджере, `Secure` и
+      `__Host-` cookie, HSTS. TLS проверен локально, прокси - тестами.
+- [x] Добавить IP allowlist (`CONAN_MANAGER_ALLOWED_IPS`, только файл
+      окружения; ошибка в списке не даёт запуститься).
+- [x] Добавить rate limiting: 10 неудачных входов за 15 минут блокируют адрес
+      на 15 минут; API - 20 запросов/с с запасом 200 на адрес.
+- [x] Добавить audit log для lifecycle, configuration, backup и recovery
+      actions: таблица `audit_log`, страница «Аудит», входы и отказы.
 - [ ] Проверить permissions, ownership и secret handling на чистой Linux-установке.
+      Сделано на node2 (не чистый): самопроверка в панели, база 0600 при
+      каждом запуске, `UMask=0027`, install.sh ставит данным 0750 и файлу
+      окружения root:root 0600. Нужна чистая Ubuntu (VM или контейнер).
 
 ## 7. Game/server integrations
 

@@ -26,6 +26,7 @@ func TestDefaultsMatchConfig(t *testing.T) {
 		"CONAN_MANAGER_EXPOSE_ERROR_DETAIL":   strconv.FormatBool(cfg.ExposeErrorDetail),
 		"CONAN_MANAGER_NOTIFY_PROXY":          cfg.NotifyProxy,
 		"CONAN_MANAGER_ALLOWED_ORIGIN":        cfg.AllowedOrigin,
+		"CONAN_MANAGER_SESSION_IDLE":          cfg.SessionIdle.String(),
 	}
 	for _, s := range Settings {
 		want, ok := got[s.Key]

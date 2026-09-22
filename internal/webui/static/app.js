@@ -39,12 +39,17 @@ function add(el, children) {
 }
 function replace(el, ...children) { el.replaceChildren(); return add(el, children); }
 
+// csrf comes with the session and must accompany every change.
+let csrf = '';
+let me = null;
+
 async function api(method, path, body) {
   const options = { method, headers: {} };
   if (body !== undefined) {
     options.headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);
   }
+  if (method !== 'GET' && csrf) options.headers['X-CSRF-Token'] = csrf;
   // location.origin carries no user:password, so the request is valid even
   // when the page was opened through a URL that had them.
   const response = await fetch(location.origin + '/api/v1' + path, options);
@@ -53,12 +58,89 @@ async function api(method, path, body) {
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = null; }
   if (!response.ok) {
-    const error = new Error((data && data.error) || response.statusText || ('HTTP ' + response.status));
+    if (response.status === 401 && path !== '/login') showLogin(me ? 'Сессия закончилась - войдите снова.' : '');
+    const error = new Error(response.status === 401 && path !== '/login' ? 'Нужно войти' : (data && data.error) || response.statusText || ('HTTP ' + response.status));
     error.status = response.status;
+    error.data = data || {};
     throw error;
   }
   return data;
 }
+
+// ---------- login ----------
+
+function locked() { return document.body.classList.contains('locked'); }
+
+async function loadMe() {
+  me = await api('GET', '/me');
+  csrf = me.csrf || '';
+  document.getElementById('who').textContent = me.username;
+  document.getElementById('logout').hidden = !me.session;
+}
+
+function waitText(seconds) {
+  const m = Math.ceil((seconds || 60) / 60);
+  return m <= 1 ? 'минуту' : m + ' мин';
+}
+
+// showLogin covers the page with the login form; whatever the page was
+// doing stops until someone logs in.
+function showLogin(message) {
+  if (locked()) return;
+  leaving.forEach(fn => fn());
+  leaving = [];
+  csrf = ''; me = null;
+  document.getElementById('confirm').close();
+  document.body.classList.add('locked');
+  const user = h('input', { name: 'username', autocomplete: 'username', required: true, spellcheck: 'false', autocapitalize: 'off' });
+  const pass = h('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true });
+  const eye = h('button', { type: 'button', class: 'ghost login-eye', text: 'Показать', tabindex: '-1', onclick: () => {
+    pass.type = pass.type === 'password' ? 'text' : 'password';
+    eye.textContent = pass.type === 'password' ? 'Показать' : 'Скрыть';
+    pass.focus();
+  } });
+  const remember = h('input', { type: 'checkbox' });
+  const error = h('div', { class: 'login-error', role: 'alert' });
+  const submit = h('button', { class: 'primary login-submit', type: 'submit', text: 'Войти' });
+  const form = h('form', { class: 'login-card', novalidate: true, onsubmit: async e => {
+    e.preventDefault();
+    if (!user.value.trim() || !pass.value) { error.textContent = 'Введите логин и пароль'; (user.value.trim() ? pass : user).focus(); return; }
+    submit.disabled = true; submit.textContent = 'Вход…'; error.textContent = '';
+    try {
+      const out = await api('POST', '/login', { username: user.value.trim(), password: pass.value, remember: remember.checked });
+      csrf = out.csrf;
+      box.remove();
+      document.body.classList.remove('locked');
+      await loadMe();
+      render();
+    } catch (err) {
+      pass.value = '';
+      pass.focus();
+      error.textContent = err.status === 401 ? 'Неверный логин или пароль.'
+        : err.status === 429 ? 'Слишком много неудачных попыток с этого адреса. Повторите через ' + waitText(err.data.retry_after) + '.'
+        : err.status === 403 ? 'Вход с этого адреса запрещён.'
+        : err.status === 503 ? 'Администратор не настроен: задайте его в /etc/conan-manager/conan-manager.env.'
+        : 'Не удалось войти: ' + err.message;
+      form.classList.remove('shake'); void form.offsetWidth; form.classList.add('shake');
+    } finally { submit.disabled = false; submit.textContent = 'Войти'; }
+  } },
+    h('div', { class: 'login-brand' }, h('div', { class: 'login-logo', text: 'CM' }),
+      h('div', {}, h('div', { class: 'login-title', text: 'Conan Manager' }), h('div', { class: 'muted small', text: 'Управление серверами Conan Exiles' }))),
+    message ? h('div', { class: 'notice small', text: message }) : null,
+    h('label', { class: 'login-field' }, h('span', { text: 'Логин' }), user),
+    h('label', { class: 'login-field' }, h('span', { text: 'Пароль' }), h('div', { class: 'login-pass' }, pass, eye)),
+    h('label', { class: 'login-remember' }, remember, h('span', { text: 'Запомнить на этом устройстве' })),
+    error, submit);
+  const box = h('div', { id: 'login' }, form,
+    h('p', { class: 'muted small login-foot', text: remember.checked ? '' : 'Без «Запомнить» вход действует до закрытия браузера.' }));
+  document.body.append(box);
+  setTimeout(() => user.focus(), 0);
+}
+
+document.getElementById('logout').onclick = e => act(e.target, async () => {
+  await api('POST', '/logout');
+  showLogin('Вы вышли из панели.');
+});
 const enc = encodeURIComponent;
 
 function toast(message, kind = 'ok', ms = 5000) {
@@ -1458,9 +1540,56 @@ async function viewNotifications() {
 const SOURCE = { panel: ['Задано в панели', 'info'], env: ['Из файла окружения', 'plain'], default: ['По умолчанию', 'plain'] };
 
 async function viewPanel() {
+  const securityBox = h('div');
   const adminsBox = h('div');
+  const sessionsBox = h('div');
   const settingsBox = h('div');
-  replace(app, h('div', { class: 'head' }, h('h1', { text: 'Панель' })), adminsBox, settingsBox);
+  replace(app, h('div', { class: 'head' }, h('h1', { text: 'Панель' })), securityBox, adminsBox, sessionsBox, settingsBox);
+
+  const drawSecurity = async () => {
+    const data = await api('GET', '/security');
+    const x = data.access;
+    const worst = data.checks.some(c => c.level === 'bad') ? 'bad' : data.checks.some(c => c.level === 'warn') ? 'warn' : 'ok';
+    const list = x => x.length ? x.join(', ') : null;
+    replace(securityBox, h('div', { class: 'panel' },
+      h('div', { class: 'row' }, h('h2', { text: 'Безопасность' }), h('span', { class: 'spacer' }),
+        h('span', { class: 'badge ' + worst, text: worst === 'ok' ? 'всё в порядке' : worst === 'warn' ? 'есть замечания' : 'есть проблемы' })),
+      h('div', { class: 'security-grid' },
+        h('ul', { class: 'checks' }, data.checks.map(c => h('li', { class: 'check ' + c.level },
+          h('span', { class: 'check-dot' }), h('div', {}, h('strong', { text: c.title }), c.detail ? h('div', { class: 'muted small', text: c.detail }) : null)))),
+        h('dl', { class: 'facts' },
+          h('dt', { text: 'Ваш адрес' }), h('dd', { class: 'mono', text: x.client_ip || '-' }),
+          h('dt', { text: 'Соединение' }), h('dd', { text: x.https ? 'HTTPS' : 'HTTP без шифрования' }),
+          h('dt', { text: 'Разрешённые адреса' }), h('dd', { class: 'mono', text: list(x.allowed_ips) || 'любые' }),
+          h('dt', { text: 'Доверенные прокси' }), h('dd', { class: 'mono', text: list(x.trusted_proxies) || 'нет' }),
+          h('dt', { text: 'Слушает' }), h('dd', { class: 'mono', text: x.listen + (x.tls ? ' (TLS)' : '') }),
+          h('dt', { text: 'Basic Auth' }), h('dd', { text: x.basic_auth ? 'включён для скриптов' : 'выключен' }),
+          h('dt', { text: 'Сессия' }), h('dd', { text: (x.session_idle === '0' ? 'без выхода по бездействию' : 'выход через ' + x.session_idle + ' бездействия') + ', не дольше ' + x.session_max_age }))),
+      h('p', { class: 'muted small', text: 'Адреса, прокси, TLS и Basic Auth задаются только в /etc/conan-manager/conan-manager.env: вход в панель не должен позволять расширить доступ к ней. После 10 неудачных входов адрес блокируется на 15 минут.' })));
+  };
+
+  const drawSessions = async () => {
+    const list = await api('GET', '/sessions');
+    const mine = list.filter(s => me && s.username === me.username && !s.current).length;
+    replace(sessionsBox, h('div', { class: 'panel' }, h('div', { class: 'row' }, h('h2', { text: 'Сессии' }), h('span', { class: 'spacer' }),
+      h('button', { text: 'Завершить мои другие сессии', disabled: !mine, onclick: e => act(e.target, async () => {
+        if (!await ask('Завершить все ваши сессии, кроме этой? На других устройствах придётся войти заново.', { ok: 'Завершить' })) return;
+        const out = await api('POST', '/sessions/end-others');
+        toast('Завершено сессий: ' + out.ended); drawSessions();
+      }) })),
+      table(['Администратор', 'Адрес', 'Браузер', 'Вход', 'Активность', ''], list.map(s => [
+        h('span', {}, h('strong', { text: s.username }), s.current ? h('span', { class: 'badge info plain', style: 'margin-left:8px', text: 'эта сессия' }) : null),
+        h('span', { class: 'mono', text: s.ip || '-' }),
+        h('span', { title: s.user_agent, text: shortAgent(s.user_agent) }),
+        fmtTime(s.created_at), fmtAgo(s.last_seen),
+        h('div', { class: 'row end' }, h('button', { class: s.current ? 'ghost' : 'danger', text: s.current ? 'Выйти' : 'Завершить', onclick: e => act(e.target, async () => {
+          if (s.current) { await api('POST', '/logout'); showLogin('Вы вышли из панели.'); return; }
+          if (!await ask(`Завершить сессию ${s.username} (${s.ip || 'адрес неизвестен'})?`, { ok: 'Завершить' })) return;
+          await api('DELETE', `/sessions/${enc(s.id)}`);
+          toast('Сессия завершена'); drawSessions();
+        }) }))]), 'Нет открытых сессий'),
+      h('p', { class: 'muted small', text: 'Смена пароля или удаление администратора сразу завершает все его сессии.' })));
+  };
 
   const passwordInput = () => h('input', { type: 'password', autocomplete: 'new-password', minlength: 10, placeholder: 'не короче 10 символов' });
 
@@ -1481,12 +1610,14 @@ async function viewPanel() {
             const input = passwordInput();
             if (!await ask(`Новый пароль для ${a.username}:`, { ok: 'Сменить', danger: false, extra: [input] })) return;
             await api('PUT', `/admins/${enc(a.username)}/password`, { password: input.value });
-            toast('Пароль изменён'); drawAdmins();
+            // Own password: the session was renewed with a new token.
+            if (me && a.username === me.username) await loadMe();
+            toast('Пароль изменён, сессии с прежним паролем завершены'); drawAdmins(); drawSessions();
           }) }),
           h('button', { class: 'danger', text: 'Удалить', onclick: e => act(e.target, async () => {
             if (!await ask(`Удалить администратора ${a.username}? Он сразу потеряет доступ.`, { ok: 'Удалить' })) return;
             await api('DELETE', `/admins/${enc(a.username)}`);
-            toast('Администратор удалён'); drawAdmins();
+            toast('Администратор удалён'); drawAdmins(); drawSessions();
           }) }))])),
       h('h3', { text: 'Добавить администратора' }),
       h('div', { class: 'form' },
@@ -1553,7 +1684,87 @@ async function viewPanel() {
         }) }))));
   };
 
-  await Promise.all([drawAdmins(), drawSettings()]);
+  await Promise.all([drawSecurity(), drawAdmins(), drawSessions(), drawSettings()]);
+}
+
+// shortAgent names the browser and system of a User-Agent.
+function shortAgent(ua) {
+  if (!ua) return '-';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\/|Opera/.test(ua) ? 'Opera' : /YaBrowser/.test(ua) ? 'Яндекс Браузер'
+    : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : null;
+  const os = /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS'
+    : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : null;
+  if (browser) return browser + (os ? ', ' + os : '');
+  return ua.split(/[\s(]/)[0].slice(0, 40);
+}
+
+// ---------- audit ----------
+
+const AUDIT_ACTIONS = {
+  'login': 'Вход', 'login.failed': 'Неудачный вход', 'login.blocked': 'Адрес заблокирован', 'logout': 'Выход',
+  'csrf.refused': 'Запрос отклонён',
+  'POST /servers': 'Создание сервера', 'PATCH /servers/{}': 'Настройки сервера', 'DELETE /servers/{}': 'Удаление сервера',
+  'POST /servers/{}/start': 'Запуск', 'POST /servers/{}/stop': 'Остановка', 'POST /servers/{}/restart': 'Рестарт',
+  'POST /servers/{}/kill': 'Убийство процесса', 'POST /servers/{}/install': 'Установка', 'POST /servers/{}/update': 'Обновление',
+  'POST /servers/{}/verify': 'Проверка файлов', 'POST /servers/{}/rcon': 'Команда RCON',
+  'POST /servers/{}/delayed-restart': 'Отложенный рестарт', 'DELETE /servers/{}/delayed-restart': 'Отмена рестарта',
+  'POST /servers/{}/backup': 'Бэкап', 'POST /servers/{}/backups/{}/restore': 'Восстановление из бэкапа',
+  'DELETE /servers/{}/backups/{}': 'Удаление бэкапа',
+  'PUT /servers/{}/config/{}': 'Изменение конфига', 'POST /servers/{}/config/{}/versions/{}/restore': 'Откат конфига',
+  'PUT /servers/{}/schedule': 'Расписание', 'DELETE /servers/{}/schedule': 'Удаление расписания',
+  'POST /notifications': 'Добавление канала', 'PATCH /notifications/{}': 'Изменение канала', 'PUT /notifications/{}': 'Изменение канала',
+  'DELETE /notifications/{}': 'Удаление канала', 'POST /notifications/{}/test': 'Проверка канала',
+  'POST /admins': 'Добавление администратора', 'DELETE /admins/{}': 'Удаление администратора', 'PUT /admins/{}/password': 'Смена пароля',
+  'PUT /panel/settings': 'Настройки менеджера', 'POST /panel/restart': 'Перезапуск менеджера',
+  'DELETE /sessions/{}': 'Завершение сессии', 'POST /sessions/end-others': 'Завершение других сессий',
+};
+
+function auditDetails(e) {
+  if (e.action === 'login.failed') return e.details === 'basic' ? 'Basic Auth' : 'форма входа';
+  if (e.action === 'login.blocked') return 'адрес заблокирован на ' + e.details.replace(/0s$/, '').replace(/m$/, ' мин');
+  if (e.action === 'csrf.refused') return 'без CSRF-токена: ' + e.details;
+  return e.details;
+}
+
+async function viewAudit() {
+  const box = h('div', { class: 'panel' });
+  const more = h('button', { text: 'Показать ещё' });
+  const user = h('input', { placeholder: 'все', autocomplete: 'off' });
+  const target = h('input', { placeholder: 'сервер, администратор…', autocomplete: 'off' });
+  const failed = h('input', { type: 'checkbox' });
+  let items = [];
+  const query = () => '&user=' + enc(user.value.trim()) + '&target=' + enc(target.value.trim()) + (failed.checked ? '&failed=1' : '');
+  const load = async before => {
+    const page = await api('GET', '/audit?limit=100' + query() + (before ? '&before=' + before : ''));
+    items = before ? items.concat(page) : page;
+    replace(box, table(['Время', 'Администратор', 'Адрес', 'Действие', 'Объект', 'Результат'], items.map(e => {
+      const label = AUDIT_ACTIONS[e.action];
+      const server = e.action.includes('/servers/{}') ? e.target : '';
+      return [
+        h('span', { class: 'nowrap', title: fmtAgo(e.time), text: fmtTime(e.time) }),
+        e.username ? h('strong', { text: e.username }) : h('span', { class: 'muted', text: '-' }),
+        h('span', { class: 'mono', text: e.ip || '-' }),
+        h('div', {}, h('span', { title: e.action, text: label || e.action }),
+          e.details ? h('div', { class: 'muted small mono audit-details', text: auditDetails(e) }) : null),
+        server ? h('a', { href: '#/server/' + enc(server), text: server })
+          : e.action.startsWith('log') ? h('span', { class: 'muted', text: '-' }) : h('span', { text: e.target || '-' }),
+        e.status < 400 ? h('span', { class: 'badge ok', text: 'выполнено' })
+          : h('span', { class: 'badge ' + (e.status >= 500 ? 'bad' : 'warn'), title: 'HTTP ' + e.status, text: e.status === 401 ? 'отказ' : e.status === 429 ? 'блокировка' : 'ошибка ' + e.status }),
+      ];
+    }), 'Записей нет'));
+    more.disabled = page.length < 100;
+  };
+  const apply = h('button', { class: 'primary', text: 'Показать', onclick: e => act(e.target, () => load(0)) });
+  for (const input of [user, target]) input.addEventListener('keydown', e => { if (e.key === 'Enter') apply.click(); });
+  failed.onchange = () => apply.click();
+  replace(app, h('div', { class: 'head' }, h('h1', { text: 'Аудит' }),
+      h('span', { class: 'muted small', text: 'Кто и что менял через панель и API: входы, запуски, настройки, бэкапы. Хранится год.' })),
+    h('div', { class: 'panel audit-filters' },
+      h('label', {}, 'Администратор', user), h('label', {}, 'Объект', target),
+      h('label', { class: 'inline' }, failed, 'Только отказы и ошибки'), apply),
+    box, h('div', { class: 'row' }, more));
+  more.onclick = e => act(e.target, () => load(items.length ? items[items.length - 1].id : 0));
+  await act(null, () => load(0));
 }
 
 // waitForManager polls until a manager started after `since` answers.
@@ -1571,11 +1782,12 @@ async function waitForManager(since) {
 // ---------- routing ----------
 
 async function render() {
+  if (locked()) return;
   leaving.forEach(fn => fn());
   leaving = [];
   const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
   const section = parts[0] || '';
-  const nav = ['events', 'notifications', 'panel'].includes(section) ? section : 'servers';
+  const nav = ['events', 'notifications', 'panel', 'audit'].includes(section) ? section : 'servers';
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === nav));
   try {
     if (section === '') await viewServers();
@@ -1584,12 +1796,15 @@ async function render() {
     else if (section === 'events') await viewEvents();
     else if (section === 'notifications') await viewNotifications();
     else if (section === 'panel') await viewPanel();
+    else if (section === 'audit') await viewAudit();
     else replace(app, h('p', {}, 'Страница не найдена. ', h('a', { href: '#/', text: 'К серверам' })));
   } catch (e) {
+    if (locked()) return;
     replace(app, h('div', { class: 'notice bad', text: 'Ошибка: ' + e.message }));
   }
 }
 
 window.addEventListener('hashchange', render);
-render();
-api('GET', '/me').then(me => { document.getElementById('who').textContent = me.username; }).catch(() => {});
+// The page asks who is logged in first; without a session the login form
+// comes up instead of the page.
+loadMe().then(render, e => { if (e.status !== 401) render(); });

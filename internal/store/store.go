@@ -35,6 +35,11 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// The database holds password hashes, sessions and sealed secrets; only
+	// the service user may read it, whatever the umask was.
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		_ = os.Chmod(p, 0o600)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -209,6 +214,28 @@ CREATE TABLE IF NOT EXISTS admins (
     created_at TEXT NOT NULL,
     password_changed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    csrf TEXT NOT NULL,
+    mark TEXT NOT NULL,
+    ip TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    ip TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    target TEXT NOT NULL DEFAULT '',
+    status INTEGER NOT NULL DEFAULT 0,
+    details TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_target ON audit_log(target, id DESC);
 `
 
 // step is one schema upgrade. needed inspects the live schema instead of trusting

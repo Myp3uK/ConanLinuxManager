@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -52,6 +54,27 @@ type Config struct {
 	// UpdateCheckInterval is how often Steam is asked for a newer build.
 	// Zero disables the check ("off" in the environment).
 	UpdateCheckInterval time.Duration
+	// AllowedIPs lists the networks that may reach the manager; empty allows
+	// every address.
+	AllowedIPs []netip.Prefix
+	// TrustedProxies are reverse proxies whose X-Forwarded-For and
+	// X-Forwarded-Proto headers are believed.
+	TrustedProxies []netip.Prefix
+	// TLSCert and TLSKey make the manager serve HTTPS itself.
+	TLSCert string
+	TLSKey  string
+	// BasicAuth lets scripts log in with HTTP Basic Auth; the browser uses
+	// sessions either way.
+	BasicAuth bool
+	// SessionIdle ends a browser session unused for that long; 0 never does.
+	SessionIdle time.Duration
+	// SessionMaxAge ends every browser session after that long.
+	SessionMaxAge time.Duration
+	// EnvFile is the environment file whose permissions are checked.
+	EnvFile string
+	// Problems are settings that could not be read. Access settings among
+	// them stop the manager rather than leave it more open than intended.
+	Problems []string
 }
 
 func Load() Config {
@@ -62,7 +85,23 @@ func Load() Config {
 // saved in the panel can take the place of the environment.
 func LoadFrom(lookup func(string) string) Config {
 	r := reader(lookup)
-	return Config{
+	var problems []string
+	prefixes := func(name string) []netip.Prefix {
+		list, err := ParsePrefixes(r.get(name))
+		if err != nil {
+			problems = append(problems, name+": "+err.Error())
+		}
+		return list
+	}
+	cfg := Config{
+		AllowedIPs:          prefixes("CONAN_MANAGER_ALLOWED_IPS"),
+		TrustedProxies:      prefixes("CONAN_MANAGER_TRUSTED_PROXIES"),
+		TLSCert:             r.get("CONAN_MANAGER_TLS_CERT"),
+		TLSKey:              r.get("CONAN_MANAGER_TLS_KEY"),
+		BasicAuth:           r.booleanOr("CONAN_MANAGER_BASIC_AUTH", true),
+		SessionIdle:         r.durationOrOff("CONAN_MANAGER_SESSION_IDLE", 12*time.Hour),
+		SessionMaxAge:       r.duration("CONAN_MANAGER_SESSION_MAX_AGE", 7*24*time.Hour),
+		EnvFile:             r.env("CONAN_MANAGER_ENV_FILE", "/etc/conan-manager/conan-manager.env"),
 		ListenAddress:       r.env("CONAN_MANAGER_LISTEN", "127.0.0.1:8080"),
 		DatabasePath:        r.env("CONAN_MANAGER_DATABASE", "/var/lib/conan-manager/manager.db"),
 		AdminUsername:       r.get("CONAN_MANAGER_ADMIN_USERNAME"),
@@ -89,6 +128,35 @@ func LoadFrom(lookup func(string) string) Config {
 			UnavailableFor: r.durationOrOff("CONAN_MANAGER_QUERY_UNAVAILABLE_FOR", 5*time.Minute),
 		},
 	}
+	if (cfg.TLSCert == "") != (cfg.TLSKey == "") {
+		problems = append(problems, "CONAN_MANAGER_TLS_CERT and CONAN_MANAGER_TLS_KEY must be set together")
+	}
+	cfg.Problems = problems
+	return cfg
+}
+
+// ParsePrefixes reads a list of networks and addresses separated by commas
+// or spaces: "10.0.0.0/8, 192.168.1.5, 2001:db8::/32". An address alone
+// stands for itself.
+func ParsePrefixes(value string) ([]netip.Prefix, error) {
+	var list []netip.Prefix
+	for _, item := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' || r == ';' || r == '	' }) {
+		if strings.Contains(item, "/") {
+			p, err := netip.ParsePrefix(item)
+			if err != nil {
+				return nil, fmt.Errorf("%q is not a network such as 10.0.0.0/8", item)
+			}
+			list = append(list, p.Masked())
+			continue
+		}
+		ip, err := netip.ParseAddr(item)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not an IP address", item)
+		}
+		ip = ip.Unmap()
+		list = append(list, netip.PrefixFrom(ip, ip.BitLen()))
+	}
+	return list, nil
 }
 
 type reader func(string) string
@@ -114,6 +182,16 @@ func (r reader) boolean(name string) bool {
 		return true
 	}
 	return false
+}
+
+func (r reader) booleanOr(name string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(r.get(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	return fallback
 }
 
 func (r reader) duration(name string, fallback time.Duration) time.Duration {

@@ -113,6 +113,25 @@ func (a *Admins) Check(ctx context.Context, username, password string) bool {
 	return good
 }
 
+// Mark fingerprints an administrator's current password. A session keeps
+// the mark it was created with, so a new password or a removed administrator
+// ends the sessions at once.
+func (a *Admins) Mark(ctx context.Context, username string) (string, bool) {
+	if username == "" {
+		return "", false
+	}
+	if a.envUser != "" && a.envPassword != "" && username == a.envUser {
+		sum := sha256.Sum256([]byte("env|" + a.envUser + "|" + a.envPassword))
+		return base64.RawStdEncoding.EncodeToString(sum[:12]), true
+	}
+	var stored string
+	if err := a.db.QueryRowContext(ctx, `SELECT password_hash FROM admins WHERE username=?`, username).Scan(&stored); err != nil {
+		return "", false
+	}
+	sum := sha256.Sum256([]byte(stored))
+	return base64.RawStdEncoding.EncodeToString(sum[:12]), true
+}
+
 // forget drops every trusted login, after any change to the administrators.
 func (a *Admins) forget() {
 	a.mu.Lock()

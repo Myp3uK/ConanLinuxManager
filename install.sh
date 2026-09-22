@@ -24,8 +24,9 @@ if [[ ! -x "${SOURCE_BINARY}" ]]; then
   exit 1
 fi
 
-install -d -m 0755 "${PREFIX}" "${DATA_DIR}" "${CONFIG_DIR}" "${RUN_DIR}"
-install -d -m 0750 "${DATA_DIR}/units"
+install -d -m 0755 "${PREFIX}" "${CONFIG_DIR}"
+# Worlds, backups and the database are nobody else's business.
+install -d -m 0750 "${DATA_DIR}" "${DATA_DIR}/units" "${RUN_DIR}"
 # Hook scripts must be root-owned and not writable by the service user; the
 # manager refuses anything else.
 install -d -m 0755 -o root -g root "${CONFIG_DIR}/hooks"
@@ -51,6 +52,9 @@ CONAN_MANAGER_SECRET_KEY=$(openssl rand -base64 48 | tr -d '=+/\n' | cut -c1-48)
 CONAN_MANAGER_SERVER_UNITS=true
 EOF
 fi
+# The administrator's password and the secret key: root only. systemd reads
+# the file as root before dropping to the service user.
+chown root:root "${CONFIG_DIR}/conan-manager.env"
 chmod 0600 "${CONFIG_DIR}/conan-manager.env"
 
 install -m 0644 "${SCRIPT_DIR}/deploy/conan-manager.service" /etc/systemd/system/conan-manager.service
@@ -67,3 +71,5 @@ systemctl enable conan-manager.service
 systemctl restart conan-manager.service
 systemctl --no-pager --full status conan-manager.service || true
 echo "Installed Conan Manager at ${PREFIX}"
+echo "Administrator password: sudo grep ADMIN_PASSWORD ${CONFIG_DIR}/conan-manager.env"
+echo "The panel listens on 127.0.0.1:8080; put HTTPS in front of it (deploy/nginx-conan-manager.conf.example)."

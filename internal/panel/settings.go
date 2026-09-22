@@ -69,6 +69,8 @@ var Settings = []Setting{
 		Help: "Сколько загруженный сервер может молчать, прежде чем его отметят недоступным и уйдёт уведомление.\n0 - не отмечать: молчание видно только как «Задержки». Проверка на зомби настраивается у сервера отдельно."},
 	{Key: "CONAN_MANAGER_ALLOWED_ORIGIN", Group: "Доступ", Label: "Адрес панели за прокси", Kind: KindOrigin,
 		Help: "Нужен, если панель открывают через HTTPS reverse proxy под другим адресом: https://manager.example.com. Пусто - только адрес, по которому открыта страница."},
+	{Key: "CONAN_MANAGER_SESSION_IDLE", Group: "Доступ", Label: "Выход при бездействии", Kind: KindDuration, Default: "12h",
+		Help: "Сессия браузера, которой не пользовались столько времени, закрывается, и нужно войти снова. Открытая вкладка панели сессию не отпускает.\n0 - не закрывать по бездействию; через 7 дней после входа сессия закрывается в любом случае."},
 	{Key: "CONAN_MANAGER_EXPOSE_ERROR_DETAIL", Group: "Доступ", Label: "Подробные ошибки", Kind: KindBool, Default: "false",
 		Help: "Показывать текст внутренних ошибок в панели. В них бывают пути к файлам; полезно при настройке."},
 }
@@ -83,14 +85,15 @@ func Lookup(key string) (Setting, bool) {
 	return Setting{}, false
 }
 
-// Normalize checks a value for a setting and returns the form to store.
 // offable settings are turned off by 0.
 var offable = map[string]bool{
 	"CONAN_MANAGER_UPDATE_CHECK_INTERVAL": true,
 	"CONAN_MANAGER_QUERY_STARTUP_GRACE":   true,
 	"CONAN_MANAGER_QUERY_UNAVAILABLE_FOR": true,
+	"CONAN_MANAGER_SESSION_IDLE":          true,
 }
 
+// Normalize checks a value for a setting and returns the form to store.
 func (s Setting) Normalize(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if strings.ContainsAny(value, "\r\n\x00") {

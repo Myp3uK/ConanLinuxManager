@@ -20,6 +20,9 @@ TimeoutStopSec=870
 RuntimeDirectory=conan-manager
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
+# Files the manager creates (database, backups, unit specifications) are
+# not readable by other users.
+UMask=0027
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

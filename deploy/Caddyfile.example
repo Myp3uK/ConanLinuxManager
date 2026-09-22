@@ -1,0 +1,15 @@
+# HTTPS in front of the manager with Caddy, which obtains and renews the
+# certificate itself. Manager settings:
+#
+#   CONAN_MANAGER_LISTEN=127.0.0.1:8080
+#   CONAN_MANAGER_TRUSTED_PROXIES=127.0.0.1
+#   CONAN_MANAGER_ALLOWED_ORIGIN=https://manager.example.com
+#
+# Caddy sets X-Forwarded-For and X-Forwarded-Proto on its own.
+
+manager.example.com {
+	request_body {
+		max_size 2MB
+	}
+	reverse_proxy 127.0.0.1:8080
+}
