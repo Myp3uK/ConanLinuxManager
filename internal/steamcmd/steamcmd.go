@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -106,11 +105,7 @@ func (s Service) InstallServer(ctx context.Context, cfg server.Config) error {
 		args = append(args, "-beta", cfg.Branch)
 	}
 	args = append(args, "+quit")
-	command := exec.CommandContext(ctx, binary, args...)
-	command.Dir = cfg.SteamCMDDir
-	command.Stdout = s.Output
-	command.Stderr = s.Output
-	if err := command.Run(); err != nil {
+	if err := runUpdate(ctx, binary, cfg.SteamCMDDir, args, s.Output); err != nil {
 		return fmt.Errorf("SteamCMD install: %w", err)
 	}
 	return nil

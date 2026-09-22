@@ -110,13 +110,7 @@ func (s Service) UpdateServer(ctx context.Context, steamcmdDir, installDir, bran
 		args = append(args, "validate")
 	}
 	args = append(args, "+quit")
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Dir = steamcmdDir
-	if output == nil {
-		output = io.Discard
-	}
-	cmd.Stdout, cmd.Stderr = output, output
-	if err := cmd.Run(); err != nil {
+	if err := runUpdate(ctx, binary, steamcmdDir, args, output); err != nil {
 		return fmt.Errorf("SteamCMD app_update: %w", err)
 	}
 	return nil

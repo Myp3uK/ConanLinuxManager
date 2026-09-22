@@ -113,7 +113,12 @@ apt_install() {
   for p in "$@"; do dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p"); done
   [[ ${#missing[@]} -eq 0 ]] && return 0
   say "installing ${missing[*]}"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}" >/dev/null
+  # Ubuntu's needrestart would otherwise print its service report here.
+  local log; log="$(mktemp)"
+  if ! DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -y -qq "${missing[@]}" >"${log}" 2>&1; then
+    cat "${log}" >&2; rm -f "${log}"; return 1
+  fi
+  rm -f "${log}"
 }
 
 if [[ "${DEPS}" -eq 1 ]]; then

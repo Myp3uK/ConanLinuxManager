@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -125,5 +126,24 @@ func TestRAMServersKeepTheProcessBackend(t *testing.T) {
 	}
 	if got := c.backendFor(server.Config{ID: "a"}); got != backendUnit {
 		t.Fatalf("plain server backend = %s", got)
+	}
+}
+
+func TestStartRefusesWithoutTheGame(t *testing.T) {
+	c, _ := testController(t)
+	host := &unitHost{active: "inactive"}
+	c.Units = unitservice.New(t.TempDir())
+	c.Units.Run = host.run
+	install := filepath.Join(t.TempDir(), "game")
+	createServer(t, c, "a", install, true)
+	if err := os.RemoveAll(filepath.Join(install, "ConanSandbox")); err != nil {
+		t.Fatal(err)
+	}
+	err := c.Start(context.Background(), "a")
+	if !errors.Is(err, ErrNotInstalled) {
+		t.Fatalf("start without the game: %v", err)
+	}
+	if host.count("start") != 0 || c.Lifecycle("a").State != "idle" {
+		t.Fatalf("unit started or lifecycle held: %v %+v", host.calls, c.Lifecycle("a"))
 	}
 }

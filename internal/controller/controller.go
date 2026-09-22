@@ -2,9 +2,12 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -303,6 +306,9 @@ func (c *Controller) executeSchedule(ctx context.Context, item scheduler.Schedul
 	return err
 }
 
+// ErrNotInstalled refuses a start when the game's executable is not there.
+var ErrNotInstalled = errors.New("the game is not installed")
+
 func (c *Controller) start(ctx context.Context, id string) error {
 	cfg, err := c.acquire(ctx, id, "starting")
 	if err != nil {
@@ -314,6 +320,13 @@ func (c *Controller) start(ctx context.Context, id string) error {
 			c.release(id)
 		}
 	}()
+	// Without the game there is nothing to start; the unit would fail at
+	// once and the crash handling would retry it for nothing.
+	if binary, _, err := process.Argv(cfg); err == nil && filepath.IsAbs(binary) {
+		if _, err := os.Stat(binary); errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: %s is missing; install the server first", ErrNotInstalled, binary)
+		}
+	}
 	if err := rotateProcessLog(cfg.InstallDir); err != nil {
 		c.Logger.Warn("rotate process log", "server", id, "error", err)
 	}

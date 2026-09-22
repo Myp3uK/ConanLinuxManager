@@ -1243,6 +1243,11 @@ scripts/build.sh                                  # бинарники в bin/
 sudo ./install.sh --domain manager.example.com
 ```
 
+Репозиторий приватный: на сервере создайте ключ (`ssh-keygen -t ed25519`),
+добавьте `~/.ssh/id_ed25519.pub` в GitHub → Settings → Deploy keys (без права
+записи) и клонируйте по SSH:
+`git clone -b server-management git@github.com:Myp3uK/ConanLinuxManager.git`.
+
 Go и исходники после установки не нужны: менеджер работает из
 `/opt/conan-manager`.
 
