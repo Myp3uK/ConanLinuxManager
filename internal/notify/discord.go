@@ -37,7 +37,7 @@ var titles = map[events.Type]text{
 	events.DatabaseCorrupt:        {"🛑 База мира повреждена", "🛑 World database is damaged"},
 	events.HookFailed:             {"⚠️ Ошибка скрипта-хука", "⚠️ Hook script failed"},
 	events.ScheduleFailed:         {"⚠️ Ошибка задания по расписанию", "⚠️ Scheduled task failed"},
-	events.UpdateAvailable:        {"🆕 Доступно обновление", "🆕 Update available"},
+	events.UpdateAvailable:        {"🆕 Найдено обновление", "🆕 Update found"},
 	events.UpdateStarted:          {"⬇️ Сервер уходит на обновление", "⬇️ Server is going down for an update"},
 	events.UpdateFinished:         {"✅ Обновление установлено", "✅ Update installed"},
 	events.UpdateFailed:           {"❌ Ошибка обновления", "❌ Update failed"},
@@ -50,6 +50,9 @@ var titles = map[events.Type]text{
 	events.ServerRestarted:        {"🔄 Сервер перезапущен", "🔄 Server restarted"},
 	events.ScheduleSkipped:        {"⏭️ Плановый рестарт пропущен", "⏭️ Scheduled restart skipped"},
 	events.RconFailed:             {"⚠️ Ошибка RCON", "⚠️ RCON failed"},
+	events.RestartWarning:         {"⏳ Плановый рестарт", "⏳ Scheduled restart"},
+	events.RestartManual:          {"🔄 Рестарт сервера", "🔄 Server restart"},
+	events.StopManual:             {"⏹️ Остановка сервера", "⏹️ Server shutdown"},
 }
 
 var detailNames = map[string]text{
@@ -174,7 +177,8 @@ func format(e events.Event, c Channel) payload {
 	}
 	keys := make([]string, 0, len(e.Details))
 	for k := range e.Details {
-		if k != "announce" {
+		// announce is the message; discord and kind steer delivery only.
+		if k != "announce" && k != "discord" && k != "kind" {
 			keys = append(keys, k)
 		}
 	}

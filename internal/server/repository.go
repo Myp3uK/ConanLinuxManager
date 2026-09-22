@@ -175,6 +175,7 @@ func scan(s scanner) (Config, error) {
 	c.AutoUpdate = autoUpdate != 0
 	c.Warnings = decodeWarnings(warnings)
 	decodeOptions(opts, &c)
+	c.legacyWarningText()
 	if rcon.Valid {
 		value := int(rcon.Int64)
 		c.RCONPort = &value

@@ -157,12 +157,13 @@ type options struct {
 	Multihome               string          `json:"multihome,omitempty"`
 	BackupOnStop            bool            `json:"backup_on_stop,omitempty"`
 	DiscordMessages         DiscordMessages `json:"discord_messages,omitempty"`
+	Messages                Messages        `json:"messages,omitempty"`
 }
 
 func encodeOptions(c Config) (string, error) {
 	data, err := json.Marshal(options{
 		ZombieCheckSeconds: c.ZombieCheckSeconds, RestartMinUptimeSeconds: c.RestartMinUptimeSeconds,
-		Map: c.Map, Multihome: c.Multihome, BackupOnStop: c.BackupOnStop, DiscordMessages: c.DiscordMessages,
+		Map: c.Map, Multihome: c.Multihome, BackupOnStop: c.BackupOnStop, Messages: c.Messages,
 	})
 	return string(data), err
 }
@@ -174,6 +175,30 @@ func decodeOptions(raw string, c *Config) {
 	}
 	c.ZombieCheckSeconds, c.RestartMinUptimeSeconds = o.ZombieCheckSeconds, o.RestartMinUptimeSeconds
 	c.Map, c.Multihome, c.BackupOnStop, c.DiscordMessages = o.Map, o.Multihome, o.BackupOnStop, o.DiscordMessages
+	c.Messages = o.Messages
+	if c.Messages == nil {
+		c.Messages = Messages{}
+	}
+	// Texts saved before there were message kinds become their kind's text.
+	if text := o.DiscordMessages.Ready; text != "" {
+		if _, set := c.Messages[MsgStarted]; !set {
+			c.Messages[MsgStarted] = Message{Text: text, Discord: true}
+		}
+	}
+}
+
+// legacyWarningText moves a warning step's own text, from before message
+// kinds, into the scheduled restart message.
+func (c *Config) legacyWarningText() {
+	if _, set := c.Messages[MsgScheduledRestart]; set {
+		return
+	}
+	for _, s := range c.Warnings.Steps {
+		if text := strings.TrimSpace(s.Message); text != "" && text != DefaultWarningMessage {
+			c.Messages[MsgScheduledRestart] = Message{Text: strings.ReplaceAll(text, "{action}", "перезапущен"), Game: true, Discord: true}
+			return
+		}
+	}
 }
 
 // validMap is an Unreal package path: the game takes it as its first argument.
@@ -192,10 +217,5 @@ func (c Config) validateOptions() error {
 	if c.Multihome != "" && net.ParseIP(c.Multihome) == nil {
 		return ErrInvalidConfig("multihome must be an IP address")
 	}
-	for _, text := range []string{c.DiscordMessages.Ready, c.DiscordMessages.Restarted, c.DiscordMessages.Stopped} {
-		if len(text) > 1500 {
-			return ErrInvalidConfig("a Discord message must be at most 1500 bytes")
-		}
-	}
-	return nil
+	return c.Messages.validate()
 }

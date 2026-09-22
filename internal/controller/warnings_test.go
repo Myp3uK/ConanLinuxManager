@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
@@ -12,32 +13,34 @@ import (
 
 type warnRun struct {
 	online []int // players seen at each check; the last value repeats
+	fail   error
 	said   []string
 	waited []time.Duration
 }
 
-func (r *warnRun) run(w server.Warnings, action string) error {
+// say records "minutes/game" for each message: minutes 0 is the single
+// message without a countdown, game says whether it went into the game.
+func (r *warnRun) run(marks []int) error {
 	checks := 0
 	count := func() (int, error) {
-		i := checks
-		if i >= len(r.online) {
-			i = len(r.online) - 1
-		}
+		i := min(checks, len(r.online)-1)
 		checks++
-		return r.online[i], nil
+		return r.online[i], r.fail
 	}
-	say := func(text string) error { r.said = append(r.said, text); return nil }
+	say := func(minutes int, inGame bool) error {
+		r.said = append(r.said, strconv.Itoa(minutes)+"/"+strconv.FormatBool(inGame))
+		return nil
+	}
 	wait := func(_ context.Context, d time.Duration) error { r.waited = append(r.waited, d); return nil }
-	return announce(context.Background(), w, action, count, say, wait)
+	return announce(context.Background(), marks, count, say, wait)
 }
 
-func TestWarningsCountDownToTheAction(t *testing.T) {
-	w := server.Warnings{Steps: []server.WarningStep{{Minutes: 1, Message: "Рестарт через {minutes} мин"}, {Minutes: 15, Message: "Рестарт через {minutes} мин"}, {Minutes: 5, Message: "Рестарт через {minutes} мин"}}}
+func TestManualWarningsCountDown(t *testing.T) {
 	r := &warnRun{online: []int{3}}
-	if err := r.run(w, "restart"); err != nil {
+	if err := r.run([]int{15, 5, 1}); err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"Рестарт через 15 мин", "Рестарт через 5 мин", "Рестарт через 1 мин"}; !reflect.DeepEqual(r.said, want) {
+	if want := []string{"15/true", "5/true", "1/true"}; !reflect.DeepEqual(r.said, want) {
 		t.Fatalf("said %q", r.said)
 	}
 	if want := []time.Duration{10 * time.Minute, 4 * time.Minute, time.Minute}; !reflect.DeepEqual(r.waited, want) {
@@ -45,44 +48,44 @@ func TestWarningsCountDownToTheAction(t *testing.T) {
 	}
 }
 
-func TestNobodyOnlineMeansNoWait(t *testing.T) {
+// With nobody online the action is not delayed, and Discord still gets one
+// message about it.
+func TestNobodyOnlineMeansOneMessageAndNoWait(t *testing.T) {
 	r := &warnRun{online: []int{0}}
-	if err := r.run(server.Warnings{Steps: []server.WarningStep{{Minutes: 10}, {Minutes: 1}}}, "stop"); err != nil || len(r.said) != 0 || len(r.waited) != 0 {
+	if err := r.run([]int{10, 1}); err != nil || !reflect.DeepEqual(r.said, []string{"0/false"}) || len(r.waited) != 0 {
+		t.Fatalf("said %q waited %v %v", r.said, r.waited, err)
+	}
+}
+
+func TestWithoutCountdownOneMessageToThePlayers(t *testing.T) {
+	r := &warnRun{online: []int{2}}
+	if err := r.run(nil); err != nil || !reflect.DeepEqual(r.said, []string{"0/true"}) || len(r.waited) != 0 {
 		t.Fatalf("said %q waited %v %v", r.said, r.waited, err)
 	}
 }
 
 func TestWarningsEndWhenTheLastPlayerLeaves(t *testing.T) {
 	r := &warnRun{online: []int{2, 0}}
-	if err := r.run(server.Warnings{Steps: []server.WarningStep{{Minutes: 10}, {Minutes: 5}, {Minutes: 1}}}, "update"); err != nil {
+	if err := r.run([]int{10, 5, 1}); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.said) != 1 || len(r.waited) != 1 {
+	if !reflect.DeepEqual(r.said, []string{"10/true"}) || len(r.waited) != 1 {
 		t.Fatalf("said %q waited %v", r.said, r.waited)
-	}
-}
-
-func TestWarningCommandLine(t *testing.T) {
-	w := server.Warnings{}
-	if got := w.CommandLine(w.Message("stop", 5)); got != "broadcast Внимание! Сервер будет остановлен через 5 мин." {
-		t.Fatalf("%q", got)
 	}
 }
 
 func TestAnnounceReportsRconErrors(t *testing.T) {
 	boom := errors.New("connection refused")
-	err := announce(context.Background(), server.Warnings{Steps: []server.WarningStep{{Minutes: 5}}}, "stop",
-		func() (int, error) { return 0, boom }, nil, nil)
-	if !errors.Is(err, boom) {
+	r := &warnRun{online: []int{0}, fail: boom}
+	if err := r.run([]int{5}); !errors.Is(err, boom) {
 		t.Fatalf("got %v", err)
 	}
 }
 
 // A scheduled action warns its minutes before the set time and happens at
-// that time, whether anyone is online or not.
+// that time, whether anyone is online or not; Discord gets every message.
 func TestCountdownKeepsTheActionOnTime(t *testing.T) {
 	due := time.Date(2026, 9, 22, 6, 0, 0, 0, time.UTC)
-	w := server.Warnings{Steps: []server.WarningStep{{Minutes: 15, Message: "{minutes}"}, {Minutes: 10, Message: "{minutes}"}, {Minutes: 5, Message: "{minutes}"}}}
 	for _, tc := range []struct {
 		name   string
 		start  time.Duration
@@ -90,17 +93,20 @@ func TestCountdownKeepsTheActionOnTime(t *testing.T) {
 		fail   error
 		said   []string
 	}{
-		{"players online", -15 * time.Minute, 2, nil, []string{"15@05:45", "10@05:50", "5@05:55"}},
-		{"nobody online", -15 * time.Minute, 0, nil, nil},
-		{"claimed late", -7 * time.Minute, 1, nil, []string{"5@05:55"}},
-		{"rcon down", -15 * time.Minute, 0, errors.New("rcon down"), nil},
+		{"players online", -15 * time.Minute, 2, nil, []string{"15/true@05:45", "10/true@05:50", "5/true@05:55"}},
+		{"nobody online", -15 * time.Minute, 0, nil, []string{"15/false@05:45", "10/false@05:50", "5/false@05:55"}},
+		{"claimed late", -7 * time.Minute, 1, nil, []string{"5/true@05:55"}},
+		{"rcon down", -15 * time.Minute, 0, errors.New("rcon down"), []string{"15/false@05:45", "10/false@05:50", "5/false@05:55"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clock := due.Add(tc.start)
 			var said []string
-			err := countdown(context.Background(), w, "restart", due, func() time.Time { return clock },
+			err := countdown(context.Background(), []int{15, 10, 5}, due, func() time.Time { return clock },
 				func() (int, error) { return tc.online, tc.fail },
-				func(text string) error { said = append(said, text+"@"+clock.Format("15:04")); return nil },
+				func(minutes int, inGame bool) error {
+					said = append(said, strconv.Itoa(minutes)+"/"+strconv.FormatBool(inGame)+"@"+clock.Format("15:04"))
+					return nil
+				},
 				func(_ context.Context, d time.Duration) error { clock = clock.Add(d); return nil })
 			if !clock.Equal(due) {
 				t.Fatalf("returned at %s, want exactly %s", clock.Format("15:04:05"), due.Format("15:04:05"))
@@ -112,5 +118,28 @@ func TestCountdownKeepsTheActionOnTime(t *testing.T) {
 				t.Fatalf("err = %v", err)
 			}
 		})
+	}
+}
+
+func TestRenderDropsPartsWithoutValues(t *testing.T) {
+	text := "Администратор перезапускает сервер[ через {minutes} мин.]"
+	if got := server.Render(text, map[string]string{"minutes": "5"}); got != "Администратор перезапускает сервер через 5 мин." {
+		t.Fatalf("%q", got)
+	}
+	if got := server.Render(text, nil); got != "Администратор перезапускает сервер" {
+		t.Fatalf("%q", got)
+	}
+	if got := server.Render("Найдено обновление {target}: {version}. {unknown}", map[string]string{"target": "игры", "version": "сборка 7"}); got != "Найдено обновление игры: сборка 7. {unknown}" {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestMessagesFallBackToDefaults(t *testing.T) {
+	m := server.Messages{server.MsgStarted: {Text: "Готово", Game: true, Discord: true}}
+	if got := m.Get(server.MsgStarted); got.Text != "Готово" || got.Game {
+		t.Fatalf("started may not go into the game: %+v", got)
+	}
+	if got := m.Get(server.MsgManualStop); !got.Game || !got.Discord || got.Text == "" {
+		t.Fatalf("default: %+v", got)
 	}
 }

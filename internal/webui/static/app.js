@@ -78,7 +78,12 @@ function toast(message, kind = 'ok', ms = 5000) {
 function fillHeight(el, reserve = 24, min = 240) {
   const fit = () => {
     if (!el.isConnected) return;
-    el.style.height = Math.max(min, window.innerHeight - el.getBoundingClientRect().top - reserve) + 'px';
+    const top = el.getBoundingClientRect().top + window.scrollY;
+    let height = Math.max(min, window.innerHeight - top - reserve);
+    el.style.height = height + 'px';
+    // What still overflows is padding below the element; take it back.
+    const excess = document.documentElement.scrollHeight - window.innerHeight;
+    if (excess > 0 && height - excess >= min) el.style.height = (height - excess) + 'px';
   };
   requestAnimationFrame(fit);
   window.addEventListener('resize', fit);
@@ -96,7 +101,7 @@ async function act(button, fn) {
 
 // ask shows a confirmation and resolves to whether it was accepted. extra
 // holds inputs shown in the dialog; the caller reads them afterwards.
-function ask(text, { ok = 'Да', danger = true, extra = [] } = {}) {
+function ask(text, { ok = 'Да', danger = true, extra = [], cancel = true } = {}) {
   const dialog = document.getElementById('confirm');
   document.getElementById('confirm-text').textContent = text;
   replace(document.getElementById('confirm-extra'), extra);
@@ -104,6 +109,7 @@ function ask(text, { ok = 'Да', danger = true, extra = [] } = {}) {
   const cancelButton = document.getElementById('confirm-cancel');
   okButton.textContent = ok;
   okButton.className = danger ? 'danger' : 'primary';
+  cancelButton.style.display = cancel ? '' : 'none';
   return new Promise(resolve => {
     const done = value => {
       okButton.onclick = cancelButton.onclick = dialog.oncancel = null;
@@ -117,7 +123,7 @@ function ask(text, { ok = 'Да', danger = true, extra = [] } = {}) {
   });
 }
 
-const JOB_NAMES = { start: 'Запуск', install: 'Установка', restart: 'Рестарт', update: 'Обновление', backup: 'Бэкап', restore: 'Восстановление' };
+const JOB_NAMES = { stop: 'Остановка', start: 'Запуск', install: 'Установка', restart: 'Рестарт', update: 'Обновление', backup: 'Бэкап', restore: 'Восстановление' };
 
 // runJob follows a background job to its end and reports how it went.
 async function runJob(job) {
@@ -180,11 +186,11 @@ function severityBadge(s) {
 function facts(pairs) {
   return h('dl', { class: 'facts' }, pairs.filter(Boolean).map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)]));
 }
-function table(headers, rows, empty = 'Пусто') {
+function table(headers, rows, empty = 'Пусто', { onRow, cls } = {}) {
   if (!rows.length) return h('p', { class: 'muted', text: empty });
-  return h('div', { class: 'scroll' }, h('table', {},
+  return h('div', { class: 'scroll' }, h('table', { class: cls || '' },
     h('thead', {}, h('tr', {}, headers.map(x => h('th', { text: x })))),
-    h('tbody', {}, rows.map(r => h('tr', {}, r.map(c => h('td', {}, c)))))));
+    h('tbody', {}, rows.map((r, i) => h('tr', onRow ? { class: 'clickable', onclick: e => { if (!e.target.closest('a, button')) onRow(i); } } : {}, r.map(c => h('td', {}, c)))))));
 }
 // rawPort is a locked field that follows the game port: the game always
 // takes the next port for Raw UDP.
@@ -301,8 +307,11 @@ function actionButtons(detail, refresh) {
     }) });
   const stop = h('button', { text: 'Остановить', disabled: !running,
     onclick: e => act(e.target, async () => {
-      if (!await ask(`Остановить «${detail.server.name}»? Игра сохранит мир; если не выйдет за 5 минут, процесс будет убит и база проверена.`, { ok: 'Остановить' })) return;
-      await api('POST', `/servers/${enc(id)}/stop`); toast('Остановка начата'); refresh();
+      const warn = h('input', { type: 'checkbox', checked: !!warnings, disabled: !warnings });
+      const label = h('label', { class: 'row' }, warn, warnings ? 'Предупредить игроков (за ' + steps.map(x => x.minutes).sort((a, b) => b - a).join(', ') + ' мин., если кто-то онлайн)' : 'Интервалы предупреждений не заданы - одно сообщение перед остановкой');
+      if (!await ask(`Остановить «${detail.server.name}»? Игра сохранит мир; если не выйдет за 5 минут, процесс будет убит и база проверена.`, { ok: 'Остановить', extra: [label] })) return;
+      const job = await api('POST', `/servers/${enc(id)}/stop`, { warn: warn.checked });
+      refresh(); await runJob(job); refresh();
     }) });
   const restart = h('button', { text: 'Рестарт', disabled: !running,
     onclick: e => act(e.target, async () => {
@@ -345,11 +354,19 @@ function sparkline(values, max) {
   return svg;
 }
 
+function countdownText(at) {
+  let s = Math.max(0, Math.round((new Date(at).getTime() - Date.now()) / 1000));
+  const d = Math.floor(s / 86400); s %= 86400;
+  const hh = Math.floor(s / 3600), mm = Math.floor(s % 3600 / 60), ss = s % 60;
+  const pad = n => String(n).padStart(2, '0');
+  return 'через ' + (d ? d + ' д ' : '') + `${pad(hh)}:${pad(mm)}:${pad(ss)}`;
+}
+
 function tile(label, value, sub, spark, hint) {
   return h('div', { class: 'tile' },
     h('div', { class: 'tile-label' }, label, hint ? helpIcon(hint) : null),
     h('div', { class: 'tile-value', text: value }),
-    sub ? h('div', { class: 'tile-sub', text: sub }) : null,
+    sub ? h('div', { class: 'tile-sub' }, sub) : null,
     spark || null);
 }
 
@@ -369,6 +386,14 @@ function statsPanel(d) {
     if (p) tiles.push(tile('Память', fmtBytes(p.rss_bytes), g && g.process_peak_bytes ? 'пик ' + fmtBytes(g.process_peak_bytes) : `${p.threads} потоков`,
       sparkline(hist.map(x => x.rss)), 'Сколько оперативной памяти занимает процесс сервера (RSS). Пик - из отчёта игры.'));
     if (g) tiles.push(tile('Аптайм', fmtUptime(g.uptime_seconds), g.npcs ? `NPC в мире: ${g.npcs}` : null, null));
+    const sch = d.schedule;
+    if (sch && sch.enabled && isSet(sch.next_run)) {
+      const at = new Date(sch.next_run);
+      const today = at.toDateString() === new Date().toDateString();
+      const label = { restart: 'След. рестарт', stop: 'След. остановка', start: 'След. запуск' }[sch.action] || 'По расписанию';
+      tiles.push(tile(label, (today ? '' : at.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' ') + at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+        h('span', { class: 'countdown', 'data-at': sch.next_run, text: countdownText(sch.next_run) }), null));
+    }
   }
   if (host.mem_total_bytes) {
     const used = host.mem_total_bytes - host.mem_available_bytes;
@@ -473,8 +498,14 @@ function eventsTable(items, withServer) {
       severityBadge(e.severity),
       withServer ? (e.server_id ? h('a', { href: `#/server/${enc(e.server_id)}`, text: e.server_name || e.server_id }) : '-') : null,
       h('span', {}, e.message, h('div', { class: 'muted small mono', text: e.type })),
-      h('span', { class: 'small mono' }, Object.entries(e.details || {}).map(([k, v]) => h('div', { text: `${k}: ${v}` }))),
-    ].filter(x => x !== null)), 'Событий нет');
+      h('span', { class: 'small mono muted details-line', text: Object.entries(e.details || {}).map(([k, v]) => `${k}: ${v}`).join(' · ') }),
+    ].filter(x => x !== null)), 'Событий нет', { onRow: i => showEvent(items[i]) });
+}
+
+function showEvent(e) {
+  const rows = [['Время', fmtTime(e.time)], ['Уровень', severityBadge(e.severity)], ['Сервер', e.server_name || e.server_id || '-'], ['Тип', h('span', { class: 'mono', text: e.type })]]
+    .concat(Object.entries(e.details || {}).map(([k, v]) => [k, v.includes('\n') || v.length > 80 ? h('pre', { class: 'log', text: v }) : h('span', { class: 'mono', text: v })]));
+  ask(e.message, { ok: 'Закрыть', danger: false, cancel: false, extra: [facts(rows)] });
 }
 
 async function viewEvents() {
@@ -552,8 +583,6 @@ async function viewNewServer() {
 // ---------- server settings helpers ----------
 
 const MAPS = [['/Game/Maps/ConanSandbox/ConanSandbox', 'Изгнанные земли (Exiled Lands)']];
-const DEFAULT_WARNING_TEXT = 'Внимание! Сервер будет {action} через {minutes} мин.';
-const DEFAULT_WARNINGS = [10, 5, 2].map(minutes => ({ minutes, message: DEFAULT_WARNING_TEXT }));
 const HOOK_LABELS = {
   pre_start: 'Перед запуском', post_start: 'После запуска процесса', on_ready: 'Сервер готов',
   pre_stop: 'Перед остановкой', post_stop: 'После остановки', on_crash: 'После падения',
@@ -618,8 +647,7 @@ async function gameSettings(ctx, running, reload) {
     let input;
     if (f.bool) input = h('input', { type: 'checkbox', checked: /^true$/i.test(value) });
     else if (f.options) input = h('select', {}, f.options.map(([v, t]) => h('option', { value: v, text: `${v} - ${t}`, selected: v === value })));
-    else input = h('input', { type: f.type || 'text', value, autocomplete: 'off' });
-    if (f.type === 'password') input.onfocus = () => { input.type = 'text'; };
+    else input = h('input', { type: f.type === 'password' ? 'text' : (f.type || 'text'), class: f.type === 'password' ? 'secret' : '', value, autocomplete: 'off', spellcheck: 'false' });
     input.disabled = running;
     controls.push({ f, input, stored, value });
     rows.push(field(f.label, input, f.hint));
@@ -731,6 +759,7 @@ const TAB_VIEWS = {
     };
     ctx.onRefresh = draw;
     draw(ctx.detail);
+    every(1000, () => document.querySelectorAll('.countdown[data-at]').forEach(el => { el.textContent = countdownText(el.dataset.at); }));
 
     const status = h('div', { class: 'muted', text: 'Проверка обращается к Steam и занимает несколько секунд.' });
     const validate = h('input', { type: 'checkbox' });
@@ -809,7 +838,7 @@ const TAB_VIEWS = {
     const filter = h('input', { placeholder: 'Фильтр, например Join succeeded', style: 'flex:1' });
     const limit = h('select', {}, [200, 500, 1000, 5000].map(n => h('option', { value: n, text: n + ' строк' })));
     const auto = h('input', { type: 'checkbox', checked: true });
-    const out = h('pre', { class: 'log', style: 'min-height:300px' });
+    const out = h('pre', { class: 'log', style: 'max-height:none' });
     const load = async () => {
       try {
         const q = `name=${enc(name.value)}&limit=${limit.value}` + (filter.value ? `&filter=${enc(filter.value)}` : '');
@@ -829,6 +858,7 @@ const TAB_VIEWS = {
         h('label', { class: 'row' }, auto, 'обновлять'),
         h('button', { text: 'Обновить', onclick: e => act(e.target, load) })),
       out));
+    fillHeight(out, 20, 260);
     await load();
     every(5000, () => { if (auto.checked && document.visibilityState === 'visible') load(); });
   },
@@ -852,7 +882,6 @@ const TAB_VIEWS = {
         !view.exists ? h('div', { class: 'notice', text: 'Файла ещё нет: игра создаст его при первом запуске. Можно написать его заранее.' }) : null,
         view.managed && view.managed.length ? h('div', { class: 'notice', text: 'Менеджер переписывает перед стартом: ' + view.managed.join(', ') + '.' }) : null,
         editor, h('div', { class: 'row end', style: 'margin-top:10px' },
-          h('span', { class: 'muted small', text: 'Основные настройки удобнее менять во вкладке «Настройки». Здесь - всё остальное.' }),
           h('span', { class: 'spacer' }),
           h('button', { class: 'primary', text: 'Сохранить файл', disabled: running, onclick: e => act(e.target, async () => {
             await api('PUT', `/servers/${enc(ctx.id)}/config/${file}`, { content: text.value });
@@ -886,9 +915,9 @@ const TAB_VIEWS = {
       try { list = await api('GET', `/servers/${enc(ctx.id)}/backups`); } catch (e) { replace(box, h('div', { class: 'notice bad', text: e.message })); return; }
       replace(box, table(['Время', 'Причина', 'Размер', 'SHA-256', 'Файл', ''], list.map(b => [
         fmtTime(b.created_at), b.reason, fmtBytes(b.size_bytes),
-        h('span', { class: 'mono small', title: b.sha256, text: (b.sha256 || '').slice(0, 12) }),
+        h('span', { class: 'mono small sha', text: b.sha256 || '-' }),
         b.exists ? h('span', { class: 'mono small', title: b.path, text: b.path.split('/').pop() }) : h('span', { class: 'badge bad', text: 'файла нет' }),
-        h('div', { class: 'row' },
+        h('div', { class: 'row end nowrap-row' },
           h('button', { text: 'Восстановить', disabled: running || !b.exists, title: running ? 'Сначала остановите сервер' : '', onclick: e => act(e.target, async () => {
             if (!await ask(`Заменить мир бэкапом от ${fmtTime(b.created_at)}? Текущий мир будет сохранён отдельным бэкапом «pre-restore».`, { ok: 'Восстановить' })) return;
             await runJob(await api('POST', `/servers/${enc(ctx.id)}/backups/${b.id}/restore`));
@@ -898,7 +927,7 @@ const TAB_VIEWS = {
             if (!await ask(`Удалить бэкап от ${fmtTime(b.created_at)}? Файл будет удалён с диска.`, { ok: 'Удалить' })) return;
             await api('DELETE', `/servers/${enc(ctx.id)}/backups/${b.id}`); toast('Удалено'); draw();
           }) })),
-      ]), 'Бэкапов менеджера ещё нет'));
+      ]), 'Бэкапов менеджера ещё нет', { cls: 'middle' }));
     };
     let lastState = ctx.detail.lifecycle.state;
     ctx.onRefresh = d => { if (d.lifecycle.state !== lastState) { lastState = d.lifecycle.state; draw(); } };
@@ -1052,33 +1081,40 @@ const TAB_VIEWS = {
     const zombieOn = h('input', { type: 'checkbox', checked: s.zombie_check_seconds > 0 });
     const zombieMinutes = h('input', { type: 'number', min: 1, max: 60, value: s.zombie_check_seconds > 0 ? Math.round(s.zombie_check_seconds / 60) : 5, style: 'width:90px' });
 
-    // ----- warnings -----
-    const w = s.warnings && s.warnings.steps && s.warnings.steps.length ? s.warnings : null;
-    const warnOn = h('input', { type: 'checkbox', checked: !!w });
-    const warnCommand = h('input', { value: (w && w.command) || 'broadcast', style: 'width:160px' });
-    const stepsBox = h('div');
-    const addStep = (minutes, message) => {
-      const m = h('input', { type: 'number', min: 1, max: 120, value: minutes, style: 'width:80px' });
-      const text = h('input', { value: message, style: 'flex:1' });
-      const row = h('div', { class: 'row step', style: 'margin-bottom:6px' }, h('span', { class: 'muted', text: 'за' }), m, h('span', { class: 'muted', text: 'мин.' }), text,
-        h('button', { class: 'ghost', text: '✕', title: 'Убрать', onclick: () => row.remove() }));
-      row.read = () => ({ minutes: +m.value, message: text.value.trim() });
-      stepsBox.append(row);
+    // ----- announcements: warning marks and the text of every message -----
+    let kinds = [];
+    try { kinds = await api('GET', '/message-kinds'); } catch { kinds = []; }
+    const w = s.warnings || {};
+    const warnCommand = h('input', { value: w.command || 'broadcast', style: 'width:160px' });
+    const marksBox = h('div', { class: 'row' });
+    const addMark = minutes => {
+      const m = h('input', { type: 'number', min: 1, max: 120, value: minutes, style: 'width:76px' });
+      const chip = h('span', { class: 'mark' }, m, h('span', { class: 'muted', text: 'мин' }), h('button', { class: 'ghost', text: '✕', title: 'Убрать', onclick: () => chip.remove() }));
+      chip.read = () => +m.value;
+      marksBox.insertBefore(chip, addButton);
     };
-    (w ? w.steps : DEFAULT_WARNINGS).slice().sort((a, b) => b.minutes - a.minutes).forEach(x => addStep(x.minutes, x.message || DEFAULT_WARNING_TEXT));
-    const warnBody = h('div', { style: w ? '' : 'display:none' }, stepsBox,
-      h('div', { class: 'row', style: 'margin:6px 0 12px' }, h('button', { text: '+ Шаг', onclick: () => addStep(1, DEFAULT_WARNING_TEXT) })),
-      h('div', { class: 'form' }, field('RCON-команда объявления', warnCommand, 'У Conan это broadcast.')),
-      h('p', { class: 'muted small', text: '{minutes} заменяется числом минут, {action} - словом «перезапущен», «остановлен» или «обновлён».' }));
-    warnOn.onchange = () => { warnBody.style.display = warnOn.checked ? '' : 'none'; };
-
-    // ----- Discord texts -----
-    const dm = s.discord_messages || {};
-    const discord = {
-      ready: h('input', { value: dm.ready || '' }),
-      restarted: h('input', { value: dm.restarted || '' }),
-      stopped: h('input', { value: dm.stopped || '' }),
+    const addButton = h('button', { text: '+', title: 'Добавить интервал', onclick: () => addMark(1) });
+    marksBox.append(addButton);
+    ((w.steps && w.steps.length) ? w.steps.map(x => x.minutes) : []).sort((a, b) => b - a).forEach(addMark);
+    const readMarks = () => [...marksBox.querySelectorAll('.mark')].map(c => c.read()).filter(n => n > 0).sort((a, b) => b - a);
+    const current = key => {
+      const k = kinds.find(x => x.key === key);
+      const m = (s.messages || {})[key];
+      return m && m.text ? { text: m.text, game: !!m.game && k.game_allowed, discord: !!m.discord } : { ...k.default };
     };
+    const msgInputs = {};
+    const msgRows = kinds.map(k => {
+      const c = current(k.key);
+      const text = h('input', { value: c.text });
+      const game = h('input', { type: 'checkbox', checked: c.game, disabled: !k.game_allowed });
+      const discord = h('input', { type: 'checkbox', checked: c.discord });
+      msgInputs[k.key] = { text, game, discord };
+      return [h('div', { class: 'msg-title' }, h('span', { text: k.title }), helpIcon(k.help + '\nПеременные: ' + k.vars + '.\nЧасть в [квадратных скобках] пропадает, если переменной внутри нет значения.')),
+        text,
+        k.game_allowed ? h('label', { class: 'row msg-flag' }, game, 'в игру') : h('span', { class: 'muted small msg-flag', text: 'только Discord' }),
+        h('label', { class: 'row msg-flag' }, discord, 'в Discord')];
+    });
+    const readMessages = () => Object.fromEntries(Object.entries(msgInputs).map(([key, i]) => [key, { text: i.text.value.trim(), game: i.game.checked, discord: i.discord.checked }]));
 
     // ----- hooks -----
     const datalist = h('datalist', { id: 'hook-scripts' }, hooksInfo.scripts.map(x => h('option', { value: x.name })));
@@ -1096,12 +1132,16 @@ const TAB_VIEWS = {
       if (mapValue !== (s.map || '')) patch.map = mapValue;
       const zombie = zombieOn.checked ? Math.round(+zombieMinutes.value * 60) : 0;
       if (zombie !== (s.zombie_check_seconds || 0)) patch.zombie_check_seconds = zombie;
-      const warnings = warnOn.checked
-        ? { steps: [...stepsBox.children].map(r => r.read()), command: warnCommand.value.trim() || 'broadcast' }
-        : { steps: [] };
-      if (JSON.stringify(warnings) !== JSON.stringify(w ? { steps: w.steps, command: w.command || 'broadcast' } : { steps: [] })) patch.warnings = warnings;
-      const messages = Object.fromEntries(Object.entries(discord).map(([k, i]) => [k, i.value.trim()]));
-      if (JSON.stringify(messages) !== JSON.stringify({ ready: dm.ready || '', restarted: dm.restarted || '', stopped: dm.stopped || '' })) patch.discord_messages = messages;
+      const marks = readMarks();
+      if (new Set(marks).size !== marks.length) throw new Error('Интервалы предупреждений не должны повторяться');
+      const warnings = { steps: marks.map(minutes => ({ minutes, message: '' })), command: warnCommand.value.trim() || 'broadcast' };
+      const before = { steps: ((w.steps || []).map(x => x.minutes)).sort((a, b) => b - a).map(minutes => ({ minutes, message: '' })), command: w.command || 'broadcast' };
+      if (JSON.stringify(warnings) !== JSON.stringify(before)) patch.warnings = warnings;
+      if (kinds.length) {
+        const messages = readMessages();
+        const was = Object.fromEntries(kinds.map(k => [k.key, current(k.key)]));
+        if (JSON.stringify(messages) !== JSON.stringify(was)) patch.messages = messages;
+      }
       if (hooksInfo.events.length) {
         const hooks = {};
         for (const [ev, input] of Object.entries(hookInputs)) { const scripts = list(input.value); if (scripts.length) hooks[ev] = scripts; }
@@ -1126,7 +1166,7 @@ const TAB_VIEWS = {
       toast('Сервер удалён'); location.hash = '#/';
     }) });
 
-    const gameBox = h('div', { class: 'panel' }, h('p', { class: 'muted', text: 'Загрузка настроек игры…' }));
+    const gameBox = h('div', { class: 'panel' }, await gameSettings(ctx, running, () => TAB_VIEWS.settings(body, ctx)));
     replace(body,
       h('div', { class: 'panel' }, h('h2', { text: 'Менеджер' }),
         h('p', { class: 'muted small', text: 'Настройки менеджера' }),
@@ -1149,13 +1189,15 @@ const TAB_VIEWS = {
           field('Доп. аргументы запуска', inputs.launch_args, 'Порты, карта и multihome передаются автоматически.'),
           field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 - как в игре. Пишется в Game.ini перед стартом; каждый бэкап копирует базу целиком.'))),
       gameBox,
-      h('div', { class: 'panel' }, h('h2', { text: 'Предупреждения игрокам (RCON)' }),
-        h('p', { class: 'muted small', text: 'Плановый рестарт и остановка: предупреждения уходят за указанные минуты до назначенного времени, само действие - ровно в назначенное время. Ручной рестарт с галочкой «предупредить» и автообновление: отсчёт начинается сразу; если на сервере никого нет, действие выполняется без ожидания. Нужен включённый RCON (раздел выше).' }),
-        h('div', { class: 'form' }, field('Предупреждать игроков', warnOn)), warnBody),
-      h('div', { class: 'panel' }, h('h2', { text: 'Тексты для Discord' }),
-        h('p', { class: 'muted small' }, 'Добавляются к стандартному уведомлению этого сервера. Пусто - только стандартный заголовок. Куда слать - на странице ', h('a', { href: '#/notifications', text: 'Уведомления' }), '.'),
+      h('div', { class: 'panel' }, h('h2', { text: 'Оповещения' }),
+        h('p', { class: 'muted small' }, 'В игру - через RCON (нужен включённый RCON в «Настройках игры»), только если кто-то онлайн. В Discord - в каналы, которые берут это сообщение (страница ', h('a', { href: '#/notifications', text: 'Уведомления' }), ').'),
         h('div', { class: 'form' },
-          field('Сервер готов', discord.ready), field('Сервер перезапущен', discord.restarted), field('Сервер остановлен', discord.stopped))),
+          field('Предупреждать за', marksBox, 'Интервалы отсчёта перед рестартом, остановкой и обновлением. Плановый рестарт - ровно в назначенное время, предупреждения уходят заранее. Рестарт и остановка по кнопке с галочкой «предупредить» и автообновление начинают отсчёт сразу и не ждут, если на сервере никого нет.\nПусто - без отсчёта: одно сообщение в момент действия.'),
+          field('RCON-команда объявления', warnCommand, 'У Conan это broadcast.')),
+        h('h3', { text: 'Для игроков' }),
+        h('div', { class: 'msg-grid' }, kinds.map((k, i) => k.group === 'players' ? msgRows[i] : null)),
+        h('h3', { text: 'Для админов (только Discord)' }),
+        h('div', { class: 'msg-grid' }, kinds.map((k, i) => k.group === 'admins' ? msgRows[i] : null))),
       h('div', { class: 'panel' }, h('h2', { text: 'Скрипты (хуки)' }), hooksHelp(hooksInfo), datalist,
         hooksInfo.enabled ? h('div', { class: 'form' }, Object.entries(hookInputs).map(([ev, input]) => field(HOOK_LABELS[ev] || ev, input))) : null),
       h('div', { class: 'floating-save' }, save),
@@ -1166,7 +1208,6 @@ const TAB_VIEWS = {
           await runJob(await api('POST', `/servers/${enc(s.id)}/install`)); ctx.refresh();
         }) }),
         h('span', { class: 'spacer' }), deleteButton)));
-    replace(gameBox, await gameSettings(ctx, running, () => TAB_VIEWS.settings(body, ctx)));
   },
 
   async history(body, ctx) {
@@ -1201,7 +1242,7 @@ function channelCategories(c, cats) {
   return cats.filter(x => x.types.some(t => c.event_types.includes(t))).map(x => x.key);
 }
 
-const AUDIENCES = [['players', 'Для игроков', 'Можно направить в общий канал сервера.'], ['admins', 'Для админов', 'Технические сообщения; упоминание роли ставится только к ним.']];
+const AUDIENCES = [['players', 'Для игроков', 'Можно направить в общий канал сервера. Тексты задаются у каждого сервера: «Настройки» → «Оповещения».'], ['admins', 'Для админов', 'Технические сообщения; упоминание роли ставится только к ним.']];
 
 async function viewNotifications() {
   const listBox = h('div');
@@ -1249,7 +1290,7 @@ async function viewNotifications() {
     const mention = h('input', { class: 'mono', value: c.mention || '', placeholder: '<@&123456789012345678>' });
     const enabled = h('input', { type: 'checkbox', checked: c.enabled });
 
-    const selected = channel ? channelCategories(c, cats) : ['start', 'restart', 'update', 'technical'];
+    const selected = channel ? channelCategories(c, cats) : cats.filter(x => x.audience === 'players').map(x => x.key);
     const boxes = {};
     const columns = AUDIENCES.map(([audience, title, note]) => h('div', { class: 'category-group' },
       h('h3', {}, title, ' ', helpIcon(note)),

@@ -43,6 +43,11 @@ const (
 	ServerRestarted        Type = "server.restarted"
 	ScheduleSkipped        Type = "schedule.skipped"
 	RconFailed             Type = "rcon.failed"
+	// RestartWarning, RestartManual and StopManual carry the announcements
+	// before a scheduled restart and an operator's restart or stop.
+	RestartWarning Type = "restart.warning"
+	RestartManual  Type = "restart.manual"
+	StopManual     Type = "stop.manual"
 )
 
 // Severity lets a subscriber filter without knowing every event type.

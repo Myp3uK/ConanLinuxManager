@@ -72,7 +72,10 @@ type Config struct {
 	// BackupOnStop takes a manager backup each time the server stops cleanly.
 	BackupOnStop bool `json:"backup_on_stop"`
 	// DiscordMessages replace the standard Discord texts for this server.
+	// Deprecated: Messages holds every text now; these are read once into it.
 	DiscordMessages DiscordMessages `json:"discord_messages"`
+	// Messages are the texts the manager announces, and where each goes.
+	Messages Messages `json:"messages"`
 	CreatedAt       time.Time       `json:"created_at"`
 	UpdatedAt       time.Time       `json:"updated_at"`
 }

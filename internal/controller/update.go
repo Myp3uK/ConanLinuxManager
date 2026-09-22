@@ -144,8 +144,8 @@ func (c *Controller) runUpdate(ctx context.Context, cfg server.Config, opts Upda
 		return "", fmt.Errorf("pre_update hook: %w", err)
 	}
 	wasRunning := c.Lifecycle(cfg.ID).State == "running"
-	if wasRunning && opts.Warn {
-		if err := c.warnPlayers(ctx, cfg, "update"); err != nil {
+	if wasRunning {
+		if err := c.warnPlayers(ctx, cfg, server.MsgUpdate, updateVars(status.Latest), opts.Warn); err != nil {
 			return "", err
 		}
 	}
@@ -213,6 +213,7 @@ func (c *Controller) updateBeforeStart(ctx context.Context, id string) {
 		c.emit(events.UpdateFailed, cfg, "A pre_update hook refused the update", map[string]string{"error": err.Error()})
 		return
 	}
+	_ = c.message(ctx, cfg, server.MsgUpdate, updateVars(status.Latest), false)
 	c.emit(events.UpdateStarted, cfg, "Updating server files before the start", map[string]string{"from": status.Installed, "to": status.Latest})
 	if _, err := os.Stat(ramstate.LayoutFor(cfg).GameDatabase); err == nil {
 		if _, err := c.takeBackup(ctx, cfg, ReasonPreUpdate); err != nil {
@@ -301,10 +302,15 @@ func (c *Controller) WatchUpdates(ctx context.Context, interval time.Duration) {
 				}
 				continue
 			}
-			if announced[cfg.ID] != status.Latest {
-				announced[cfg.ID] = status.Latest
-				c.emit(events.UpdateAvailable, cfg, "A new server build is available", map[string]string{"installed": status.Installed, "latest": status.Latest})
+			// With auto_update the update's own countdown announces the build;
+			// without it, the build is announced once.
+			if announced[cfg.ID] != status.Latest && !cfg.AutoUpdate {
+				running := c.Lifecycle(cfg.ID).State == "running"
+				if err := c.message(ctx, cfg, server.MsgUpdate, updateVars(status.Latest), running); err != nil {
+					c.Logger.Warn("update announcement not said in game", "server", cfg.ID, "error", err)
+				}
 			}
+			announced[cfg.ID] = status.Latest
 			if cfg.AutoUpdate {
 				if _, err := c.UpdateJob(ctx, cfg.ID, UpdateOptions{Warn: true}); err != nil {
 					c.Logger.Info("automatic update not started", "server", cfg.ID, "error", err)
@@ -323,4 +329,10 @@ func (c *Controller) WatchUpdates(ctx context.Context, interval time.Duration) {
 			timer.Reset(interval)
 		}
 	}
+}
+
+// updateVars fill the update message for a new game build. Mods will pass
+// "мода" and their names.
+func updateVars(build string) map[string]string {
+	return map[string]string{"target": "игры", "version": "сборка " + build}
 }

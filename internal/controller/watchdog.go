@@ -72,7 +72,7 @@ func (c *Controller) observeAvailability(ctx context.Context, cfg server.Config)
 			// The process starting is not the server being joinable: a large
 			// world takes minutes to load. The first query reply is.
 			if a.State == "responsive" && previous != "responsive" {
-				c.emit(events.ServerReady, cfg, "Server is accepting connections", c.announce(cfg.ID, func(m server.DiscordMessages) string { return m.Ready }))
+				c.emit(events.ServerReady, cfg, "Server is accepting connections", nil)
 				_ = c.runHooks(ctx, hooks.Async, "on_ready", cfg, nil)
 			}
 			if a.State == "unavailable" && previous != "unavailable" {
@@ -94,19 +94,6 @@ func (c *Controller) zombieLimit(id string) time.Duration {
 		return 0
 	}
 	return time.Duration(cfg.ZombieCheckSeconds) * time.Second
-}
-
-// announce carries the operator's own Discord text for an event, if the
-// server has one, in the details the Discord formatter shows as the message.
-func (c *Controller) announce(id string, pick func(server.DiscordMessages) string) map[string]string {
-	cfg, err := c.Repo.Get(context.Background(), id)
-	if err != nil {
-		return nil
-	}
-	if text := strings.TrimSpace(pick(cfg.DiscordMessages)); text != "" {
-		return map[string]string{"announce": text}
-	}
-	return nil
 }
 
 func (c *Controller) Health(id string) Health {

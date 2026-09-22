@@ -70,6 +70,10 @@ func (d *Dispatcher) Handle(e events.Event) {
 		d.Logger.Error("load notification channels", "error", err)
 		return
 	}
+	// A server can keep a message kind out of Discord.
+	if e.Details["discord"] == "off" {
+		return
+	}
 	for _, c := range channels {
 		if !c.wants(e) {
 			continue

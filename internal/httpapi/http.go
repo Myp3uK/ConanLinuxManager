@@ -126,6 +126,9 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	mux.HandleFunc("GET /api/v1/events", a.events)
 	mux.HandleFunc("GET /api/v1/hooks", a.hookScripts)
 	mux.HandleFunc("/api/v1/notifications", a.notificationChannels)
+	mux.HandleFunc("GET /api/v1/message-kinds", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, server.MessageKinds)
+	})
 	mux.HandleFunc("GET /api/v1/notification-categories", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, notify.Categories())
 	})
@@ -636,7 +639,13 @@ func (a *api) server(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, r, http.StatusNotFound, fmt.Errorf("server %q not found", id))
 			return
 		}
+		// The overview shows the next scheduled action; none is null.
+		var next any
+		if sch, err := a.repo.GetSchedule(r.Context(), id); err == nil {
+			next = sch
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
+			"schedule":  next,
 			"server":    value,
 			"process":   a.control.Snapshot(id),
 			"lifecycle": a.control.Lifecycle(id),
@@ -687,6 +696,7 @@ type serverPatch struct {
 	Multihome               *string                 `json:"multihome"`
 	BackupOnStop            *bool                   `json:"backup_on_stop"`
 	DiscordMessages         *server.DiscordMessages `json:"discord_messages"`
+	Messages                *server.Messages        `json:"messages"`
 }
 
 func (a *api) patchServer(w http.ResponseWriter, r *http.Request, id string) {
@@ -717,6 +727,7 @@ func (a *api) patchServer(w http.ResponseWriter, r *http.Request, id string) {
 		assign(&cfg.Multihome, patch.Multihome)
 		assign(&cfg.BackupOnStop, patch.BackupOnStop)
 		assign(&cfg.DiscordMessages, patch.DiscordMessages)
+		assign(&cfg.Messages, patch.Messages)
 		if patch.RCONPort != nil {
 			value := *patch.RCONPort
 			cfg.RCONPort = &value
@@ -865,6 +876,24 @@ func (a *api) serverAction(w http.ResponseWriter, r *http.Request, id, action st
 		}
 		err = a.control.Start(r.Context(), id)
 	case "stop":
+		// The interface stops through a job that tells the players first,
+		// with a countdown when warn is set; a bare request stops at once.
+		if r.ContentLength != 0 {
+			var body struct {
+				Warn bool `json:"warn"`
+			}
+			if err := decodeStrict(r, &body); err != nil {
+				a.fail(w, r, http.StatusBadRequest, err)
+				return
+			}
+			job, stopErr := a.control.StopJob(r.Context(), id, body.Warn)
+			if stopErr != nil {
+				a.fail(w, r, http.StatusConflict, stopErr)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, job)
+			return
+		}
 		err = a.control.Stop(r.Context(), id)
 	case "kill":
 		err = a.control.Kill(r.Context(), id)

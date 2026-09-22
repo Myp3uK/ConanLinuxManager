@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/example/conan-manager/internal/events"
@@ -16,6 +15,10 @@ import (
 )
 
 func (c *Controller) emit(t events.Type, cfg server.Config, message string, details map[string]string) {
+	// Events that are also a message kind carry the server's text for it.
+	if kind, reason := kindOf(t, details); kind != "" {
+		details = withMessage(cfg, kind, map[string]string{"reason": reason}, details)
+	}
 	c.Events.Publish(events.Event{Type: t, ServerID: cfg.ID, ServerName: cfg.Name, Message: message, Details: details})
 }
 
@@ -47,9 +50,6 @@ func (c *Controller) afterExit(cfg server.Config, crashed bool, exit *process.Ex
 	if crashed {
 		c.handleCrash(cfg, exit, details)
 		return
-	}
-	if text := strings.TrimSpace(cfg.DiscordMessages.Stopped); text != "" {
-		details["announce"] = text
 	}
 	c.emit(events.ServerStopped, cfg, "Server stopped", details)
 	_ = c.runHooks(context.Background(), hooks.Async, "post_stop", cfg, exitEnv(exit))

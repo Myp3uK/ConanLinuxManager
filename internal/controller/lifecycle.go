@@ -205,6 +205,7 @@ func managerOnly(cfg server.Config) server.Config {
 	cfg.RestartMinUptimeSeconds = 0
 	cfg.BackupOnStop = false
 	cfg.DiscordMessages = server.DiscordMessages{}
+	cfg.Messages = nil
 	cfg.UpdatedAt = time.Time{}
 	return cfg
 }

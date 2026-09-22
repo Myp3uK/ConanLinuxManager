@@ -197,7 +197,7 @@ func (c *Controller) Restart(ctx context.Context, id string) error {
 				return err
 			}
 			if cfg, err := c.Repo.Get(ctx, id); err == nil {
-				c.emit(events.ServerRestarted, cfg, "Server restarted", c.announce(id, func(m server.DiscordMessages) string { return m.Restarted }))
+				c.emit(events.ServerRestarted, cfg, "Server restarted", nil)
 			}
 			return nil
 		}
@@ -679,10 +679,7 @@ func (c *Controller) RestartJob(ctx context.Context, id string, warn bool) (Job,
 	c.setJob(job)
 	// The goroutine gets its own copy: the caller returns job concurrently.
 	go func(job Job) {
-		var err error
-		if warn {
-			err = c.warnPlayers(context.Background(), cfg, "restart")
-		}
+		err := c.warnPlayers(context.Background(), cfg, server.MsgManualRestart, nil, warn)
 		if err == nil {
 			err = c.Restart(context.Background(), id)
 		}
@@ -693,6 +690,34 @@ func (c *Controller) RestartJob(ctx context.Context, id string, warn bool) (Job,
 			if cfg, getErr := c.Repo.Get(context.Background(), id); getErr == nil {
 				c.emit(events.ServerStartFailed, cfg, "Restart failed", map[string]string{"error": err.Error()})
 			}
+		}
+		c.setJob(job)
+	}(job)
+	return job, nil
+}
+
+// StopJob is an operator's stop: the players are told, with a countdown
+// when warn is set, and the server is stopped.
+func (c *Controller) StopJob(ctx context.Context, id string, warn bool) (Job, error) {
+	cfg, err := c.Repo.Get(ctx, id)
+	if err != nil {
+		return Job{}, err
+	}
+	if state := c.Lifecycle(id).State; state != "running" {
+		return Job{}, fmt.Errorf("server %q is %s, not running", id, state)
+	}
+	now := time.Now().UTC()
+	job := Job{ID: fmt.Sprintf("stop-%d", now.UnixNano()), ServerID: id, Kind: "stop", Status: "running", CreatedAt: now, UpdatedAt: now}
+	c.setJob(job)
+	go func(job Job) {
+		err := c.warnPlayers(context.Background(), cfg, server.MsgManualStop, nil, warn)
+		if err == nil {
+			err = c.Stop(context.Background(), id)
+		}
+		job.UpdatedAt = time.Now().UTC()
+		job.Status = "completed"
+		if err != nil {
+			job.Status, job.Error = "failed", err.Error()
 		}
 		c.setJob(job)
 	}(job)

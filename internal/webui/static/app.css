@@ -193,3 +193,21 @@ details.versions[open] > summary { margin-bottom: 10px; }
 .floating-save { position: fixed; right: 24px; bottom: 24px; z-index: 50; }
 .floating-save button { padding: 10px 26px; font-size: 15px; box-shadow: 0 8px 24px rgba(0,0,0,.55); border-color: var(--accent); }
 main:has(.floating-save) { padding-bottom: 100px; }
+tr.clickable { cursor: pointer; }
+.details-line { display: block; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.middle td { vertical-align: middle; }
+.sha { word-break: break-all; }
+.nowrap-row { flex-wrap: nowrap; }
+input.secret { -webkit-text-security: disc; }
+input.secret:focus { -webkit-text-security: none; }
+.countdown { font-variant-numeric: tabular-nums; }
+#confirm-extra .facts { max-height: 60vh; overflow: auto; }
+#confirm-extra pre.log { max-height: 30vh; margin: 0; }
+dialog:has(#confirm-extra .facts) { width: min(760px, calc(100vw - 32px)); }
+.mark { display: inline-flex; align-items: center; gap: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 2px 2px 2px 4px; }
+.mark input { border: 0; background: transparent; padding: 4px; }
+.mark button { padding: 4px 8px; }
+.msg-grid { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr) auto auto; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
+.msg-title { display: flex; align-items: center; gap: 6px; }
+.msg-flag { white-space: nowrap; flex-wrap: nowrap; }
+@media (max-width: 900px) { .msg-grid { grid-template-columns: 1fr; } .msg-title { margin-top: 8px; } }
