@@ -27,9 +27,16 @@ type Availability struct {
 	ThresholdSeconds int64     `json:"threshold_seconds"`
 }
 
+// NewAvailability starts watching a server. A zero StartupGrace leaves the
+// loading time unlimited (StartupUntil stays zero); a zero UnavailableFor
+// never marks the server unavailable.
 func NewAvailability(endpoint string, now time.Time, policy AvailabilityPolicy) Availability {
-	return Availability{Mode: "observe", State: "starting", Endpoint: endpoint,
-		StartupUntil: now.Add(policy.StartupGrace), ThresholdSeconds: int64(policy.UnavailableFor / time.Second)}
+	a := Availability{Mode: "observe", State: "starting", Endpoint: endpoint,
+		ThresholdSeconds: int64(policy.UnavailableFor / time.Second)}
+	if policy.StartupGrace > 0 {
+		a.StartupUntil = now.Add(policy.StartupGrace)
+	}
+	return a
 }
 
 func (a *Availability) Record(now time.Time, err error) {
@@ -40,7 +47,7 @@ func (a *Availability) Record(now time.Time, err error) {
 		return
 	}
 	a.Error = err.Error()
-	if a.LastSuccess.IsZero() && now.Before(a.StartupUntil) {
+	if a.LastSuccess.IsZero() && (a.StartupUntil.IsZero() || now.Before(a.StartupUntil)) {
 		a.State = "starting"
 		return
 	}
@@ -49,7 +56,7 @@ func (a *Availability) Record(now time.Time, err error) {
 	}
 	a.Failures++
 	a.State = "suspect"
-	a.WouldRecover = now.Sub(a.FailureSince) >= time.Duration(a.ThresholdSeconds)*time.Second
+	a.WouldRecover = a.ThresholdSeconds > 0 && now.Sub(a.FailureSince) >= time.Duration(a.ThresholdSeconds)*time.Second
 	if a.WouldRecover {
 		a.State = "unavailable"
 	}

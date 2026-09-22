@@ -56,7 +56,7 @@ var Settings = []Setting{
 	{Key: "CONAN_MANAGER_STOP_TIMEOUT", Group: "Серверы", Label: "Ожидание остановки", Kind: KindDuration, Default: "5m",
 		Help: "Сколько ждать нормального выключения сервера, прежде чем убить процесс и проверить базу. TimeoutStopSec в conan-server@.service должен быть больше."},
 	{Key: "CONAN_MANAGER_UPDATE_CHECK_INTERVAL", Group: "Серверы", Label: "Проверка обновлений", Kind: KindDuration, Default: "30m",
-		Help: "Как часто спрашивать Steam о новой сборке. Не чаще раза в 5 минут; off - не проверять."},
+		Help: "Как часто спрашивать Steam о новой сборке на работающих серверах. Не чаще раза в 5 минут.\n0 - не проверять по времени: с автообновлением Steam спрашивается только перед запуском сервера (кнопкой, по расписанию, при плановом и отложенном рестарте)."},
 	{Key: "CONAN_MANAGER_HOOK_TIMEOUT", Group: "Серверы", Label: "Лимит времени скрипта", Kind: KindDuration, Default: "5m",
 		Help: "Скрипт, который работает дольше, завершается принудительно."},
 	{Key: "CONAN_MANAGER_QUERY_INTERVAL", Group: "Проверка доступности", Label: "Интервал опроса", Kind: KindDuration, Default: "15s",
@@ -64,9 +64,9 @@ var Settings = []Setting{
 	{Key: "CONAN_MANAGER_QUERY_TIMEOUT", Group: "Проверка доступности", Label: "Ожидание ответа", Kind: KindDuration, Default: "3s",
 		Help: "Сколько ждать ответа на один запрос."},
 	{Key: "CONAN_MANAGER_QUERY_STARTUP_GRACE", Group: "Проверка доступности", Label: "Время на загрузку", Kind: KindDuration, Default: "10m",
-		Help: "Сколько сервер может загружаться, прежде чем молчание считается зависанием."},
+		Help: "Сколько сервер может загружаться, прежде чем молчание query-порта считается сбоем.\n0 - без ограничения: пока сервер ни разу не ответил, он считается загружающимся."},
 	{Key: "CONAN_MANAGER_QUERY_UNAVAILABLE_FOR", Group: "Проверка доступности", Label: "Недоступен после", Kind: KindDuration, Default: "5m",
-		Help: "Сколько загруженный сервер может молчать, прежде чем его отметят недоступным."},
+		Help: "Сколько загруженный сервер может молчать, прежде чем его отметят недоступным и уйдёт уведомление.\n0 - не отмечать: молчание видно только как «Задержки». Проверка на зомби настраивается у сервера отдельно."},
 	{Key: "CONAN_MANAGER_ALLOWED_ORIGIN", Group: "Доступ", Label: "Адрес панели за прокси", Kind: KindOrigin,
 		Help: "Нужен, если панель открывают через HTTPS reverse proxy под другим адресом: https://manager.example.com. Пусто - только адрес, по которому открыта страница."},
 	{Key: "CONAN_MANAGER_EXPOSE_ERROR_DETAIL", Group: "Доступ", Label: "Подробные ошибки", Kind: KindBool, Default: "false",
@@ -84,6 +84,13 @@ func Lookup(key string) (Setting, bool) {
 }
 
 // Normalize checks a value for a setting and returns the form to store.
+// offable settings are turned off by 0.
+var offable = map[string]bool{
+	"CONAN_MANAGER_UPDATE_CHECK_INTERVAL": true,
+	"CONAN_MANAGER_QUERY_STARTUP_GRACE":   true,
+	"CONAN_MANAGER_QUERY_UNAVAILABLE_FOR": true,
+}
+
 func (s Setting) Normalize(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if strings.ContainsAny(value, "\r\n\x00") {
@@ -97,8 +104,8 @@ func (s Setting) Normalize(value string) (string, error) {
 		}
 		return strconv.Itoa(n), nil
 	case KindDuration:
-		if s.Key == "CONAN_MANAGER_UPDATE_CHECK_INTERVAL" && strings.EqualFold(value, "off") {
-			return "off", nil
+		if offable[s.Key] && (value == "0" || strings.EqualFold(value, "off")) {
+			return "0", nil
 		}
 		d, err := time.ParseDuration(value)
 		if err != nil || d < time.Second || d > 7*24*time.Hour {

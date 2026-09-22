@@ -757,7 +757,13 @@ async function viewServer(id, tab) {
   const box = h('div');
   replace(page.body, box);
   try { await TAB_VIEWS[tab](box, page.ctx); }
-  finally { if (box.isConnected) page.body.style.minHeight = ''; }
+  finally {
+    if (box.isConnected) {
+      page.body.style.minHeight = '';
+      // Heights fitted while the old tab's height held the page are wrong.
+      window.dispatchEvent(new Event('resize'));
+    }
+  }
 }
 
 const TAB_VIEWS = {
@@ -1449,7 +1455,7 @@ async function viewNotifications() {
 
 // ---------- manager panel: administrators and settings ----------
 
-const SOURCE = { panel: ['из панели', 'info'], env: ['из файла окружения', 'plain'], default: ['по умолчанию', 'plain'] };
+const SOURCE = { panel: ['Задано в панели', 'info'], env: ['Из файла окружения', 'plain'], default: ['По умолчанию', 'plain'] };
 
 async function viewPanel() {
   const adminsBox = h('div');
@@ -1508,13 +1514,13 @@ async function viewPanel() {
       inputs[s.key] = { s, input };
       const help = s.help + '\n\nПеременная: ' + s.key + (s.default ? '\nПо умолчанию: ' + s.default : '') +
         (s.env ? '\nВ файле окружения: ' + s.env : '') + (s.live ? '\nПрименяется сразу.' : '\nПрименяется после перезапуска менеджера.');
-      const meta = h('div', { class: 'setting-meta' },
-        h('span', { class: 'badge plain ' + SOURCE[s.source][1], text: SOURCE[s.source][0] }),
-        !s.live && s.value !== s.active ? h('span', { class: 'badge warn', text: 'сейчас: ' + (s.active || 'пусто') }) : null,
-        s.source === 'panel' ? h('button', { class: 'ghost small', text: 'Сбросить', title: s.env ? 'Вернуть значение из файла окружения: ' + s.env : 'Вернуть значение по умолчанию', onclick: e => act(e.target, async () => {
-          toast('Сброшено'); drawSettings(await api('PUT', '/panel/settings', { [s.key]: null }));
-        }) }) : null);
-      group.rows.push(field(s.label, h('div', {}, input, meta), help));
+      const dot = h('span', { class: 'src-dot src-' + s.source, 'data-tip': SOURCE[s.source][0] });
+      const waiting = !s.live && s.value !== s.active
+        ? h('span', { class: 'src-wait', text: '⟳', 'data-tip': 'Сейчас действует: ' + (s.active || 'пусто') + '. Новое значение - после перезапуска менеджера.' }) : null;
+      const reset = s.source === 'panel' ? h('button', { class: 'ghost icon-button', text: '↺', title: s.env ? 'Сбросить: вернуть значение из файла окружения (' + s.env + ')' : 'Сбросить: вернуть значение по умолчанию' + (s.default ? ' (' + s.default + ')' : ''), onclick: e => act(e.target, async () => {
+        toast('Сброшено'); drawSettings(await api('PUT', '/panel/settings', { [s.key]: null }));
+      }) }) : null;
+      group.rows.push(field(s.label, h('div', { class: 'setting-row' }, dot, input, waiting, reset), help));
     }
     const restart = h('button', { class: data.restart_pending ? 'primary' : '', text: 'Перезапустить менеджер', disabled: !data.can_restart, onclick: e => act(e.target, async () => {
       if (!await ask('Перезапустить менеджер? Серверы продолжат работать, страница переподключится через несколько секунд.', { ok: 'Перезапустить', danger: false })) return;
@@ -1524,7 +1530,12 @@ async function viewPanel() {
       toast('Менеджер снова в строю'); drawSettings();
     }) });
     replace(settingsBox, h('div', { class: 'panel' }, h('h2', { text: 'Настройки менеджера' }),
-      h('p', { class: 'muted small', text: 'Значение из панели главнее файла окружения. «Сбросить» возвращает значение из файла. Адрес, база, основной администратор, ключ шифрования и папка скриптов меняются только в /etc/conan-manager/conan-manager.env.' }),
+      h('p', { class: 'muted small', text: 'Значение из панели главнее файла окружения. Кнопка ↺ возвращает значение из файла или по умолчанию. Адрес, база, основной администратор, ключ шифрования и папка скриптов меняются только в /etc/conan-manager/conan-manager.env.' }),
+      h('div', { class: 'src-legend muted small' },
+        h('span', {}, h('span', { class: 'src-dot src-panel' }), 'задано в панели'),
+        h('span', {}, h('span', { class: 'src-dot src-env' }), 'из файла окружения'),
+        h('span', {}, h('span', { class: 'src-dot src-default' }), 'по умолчанию'),
+        h('span', {}, h('span', { class: 'src-wait', text: '⟳' }), 'ждёт перезапуска менеджера')),
       data.restart_pending ? h('div', { class: 'notice' }, 'Часть изменений применится после перезапуска менеджера. Серверы при этом не останавливаются.') : null,
       groups.map(g => [h('h3', { text: g.name }), h('div', { class: 'form' }, g.rows)]),
       h('div', { class: 'row', style: 'margin-top:14px' }, restart,

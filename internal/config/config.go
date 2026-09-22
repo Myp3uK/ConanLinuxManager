@@ -85,8 +85,8 @@ func LoadFrom(lookup func(string) string) Config {
 		Availability: watchdog.AvailabilityPolicy{
 			Interval:       r.duration("CONAN_MANAGER_QUERY_INTERVAL", 15*time.Second),
 			Timeout:        r.duration("CONAN_MANAGER_QUERY_TIMEOUT", 3*time.Second),
-			StartupGrace:   r.duration("CONAN_MANAGER_QUERY_STARTUP_GRACE", 10*time.Minute),
-			UnavailableFor: r.duration("CONAN_MANAGER_QUERY_UNAVAILABLE_FOR", 5*time.Minute),
+			StartupGrace:   r.durationOrOff("CONAN_MANAGER_QUERY_STARTUP_GRACE", 10*time.Minute),
+			UnavailableFor: r.durationOrOff("CONAN_MANAGER_QUERY_UNAVAILABLE_FOR", 5*time.Minute),
 		},
 	}
 }
@@ -96,10 +96,10 @@ type reader func(string) string
 func (r reader) get(name string) string { return r(name) }
 
 func (r reader) updateInterval() time.Duration {
-	if strings.EqualFold(strings.TrimSpace(r.get("CONAN_MANAGER_UPDATE_CHECK_INTERVAL")), "off") {
+	value := r.durationOrOff("CONAN_MANAGER_UPDATE_CHECK_INTERVAL", 30*time.Minute)
+	if value == 0 {
 		return 0
 	}
-	value := r.duration("CONAN_MANAGER_UPDATE_CHECK_INTERVAL", 30*time.Minute)
 	// Each check starts SteamCMD; more often than every five minutes buys
 	// nothing, since Steam's own app info refreshes no faster.
 	if value < 5*time.Minute {
@@ -122,6 +122,15 @@ func (r reader) duration(name string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return value
+}
+
+// durationOrOff is a duration where 0 or "off" turns the feature off.
+func (r reader) durationOrOff(name string, fallback time.Duration) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(r.get(name))) {
+	case "0", "0s", "off":
+		return 0
+	}
+	return r.duration(name, fallback)
 }
 
 func (r reader) env(name, fallback string) string {

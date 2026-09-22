@@ -214,3 +214,13 @@ dialog:has(#confirm-extra .facts) { width: min(760px, calc(100vw - 32px)); }
 @media (max-width: 900px) { .msg-grid { grid-template-columns: 1fr; } .msg-title { margin-top: 8px; } }
 .kind-switch { margin: 4px 0 6px; }
 textarea.secret-area:not(:placeholder-shown) { -webkit-text-security: disc; }
+.setting-row { display: flex; align-items: center; gap: 8px; }
+.setting-row > input:not([type=checkbox]) { flex: 1; min-width: 0; }
+.src-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.src-dot.src-panel { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.src-dot.src-env { background: var(--muted); }
+.src-dot.src-default { border: 1px solid var(--line-hover); }
+.src-wait { color: var(--warn); cursor: help; font-size: 16px; }
+.icon-button { padding: 4px 10px; font-size: 15px; line-height: 1; }
+.src-legend { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 0 0 10px; }
+.src-legend span { display: inline-flex; align-items: center; gap: 6px; }

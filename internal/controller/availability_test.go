@@ -20,7 +20,7 @@ func TestUnavailableObservationDoesNotStopLifecycle(t *testing.T) {
 	defer listener.Close()
 	cfg := create("observe", filepath.Join(t.TempDir(), "game"), "")
 	cfg.QueryPort = listener.LocalAddr().(*net.UDPAddr).Port
-	c.AvailabilityPolicy = watchdog.AvailabilityPolicy{Interval: 10 * time.Millisecond, Timeout: 10 * time.Millisecond, StartupGrace: 0, UnavailableFor: time.Second}
+	c.AvailabilityPolicy = watchdog.AvailabilityPolicy{Interval: 10 * time.Millisecond, Timeout: 10 * time.Millisecond, StartupGrace: time.Nanosecond, UnavailableFor: time.Second}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if _, err := c.acquire(ctx, cfg.ID, "running"); err != nil {
