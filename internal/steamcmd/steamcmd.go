@@ -92,7 +92,7 @@ func (s Service) Ensure(ctx context.Context, directory string) (string, error) {
 	return binary, nil
 }
 
-func (s Service) InstallServer(ctx context.Context, cfg server.Config) error {
+func (s Service) InstallServer(ctx context.Context, cfg server.Config, output io.Writer) error {
 	binary, err := s.Ensure(ctx, cfg.SteamCMDDir)
 	if err != nil {
 		return err
@@ -105,7 +105,10 @@ func (s Service) InstallServer(ctx context.Context, cfg server.Config) error {
 		args = append(args, "-beta", cfg.Branch)
 	}
 	args = append(args, "+quit")
-	if err := runUpdate(ctx, binary, cfg.SteamCMDDir, args, s.Output); err != nil {
+	if output == nil {
+		output = s.Output
+	}
+	if err := runUpdate(ctx, binary, cfg.SteamCMDDir, args, output); err != nil {
 		return fmt.Errorf("SteamCMD install: %w", err)
 	}
 	return nil

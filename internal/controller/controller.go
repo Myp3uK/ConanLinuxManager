@@ -114,7 +114,7 @@ type Controller struct {
 
 // Steam is the part of SteamCMD the controller uses; tests replace it.
 type Steam interface {
-	InstallServer(ctx context.Context, cfg server.Config) error
+	InstallServer(ctx context.Context, cfg server.Config, output io.Writer) error
 	LatestBuild(ctx context.Context, steamcmdDir, branch string) (string, error)
 	UpdateServer(ctx context.Context, steamcmdDir, installDir, branch string, validate bool, output io.Writer) error
 }
@@ -682,13 +682,19 @@ func (c *Controller) Install(ctx context.Context, id string) (Job, error) {
 		c.jobsMu.Lock()
 		c.jobs[job.ID] = job
 		c.jobsMu.Unlock()
-		err := c.Steam.InstallServer(context.Background(), cfg)
+		c.emit(events.InstallStarted, cfg, "Installing server files", nil)
+		out := openSteamLog(cfg, "install")
+		err := c.Steam.InstallServer(context.Background(), cfg, out)
+		_ = out.Close()
 		job.UpdatedAt = time.Now().UTC()
 		if err != nil {
 			job.Status = "failed"
 			job.Error = err.Error()
+			c.emit(events.InstallFailed, cfg, "Install failed", map[string]string{"error": err.Error()})
 		} else {
 			job.Status = "completed"
+			build, _ := steamcmd.InstalledBuild(cfg.InstallDir)
+			c.emit(events.InstallFinished, cfg, "Server files installed", map[string]string{"build": build})
 		}
 		c.jobsMu.Lock()
 		c.jobs[job.ID] = job
@@ -780,13 +786,35 @@ func (c *Controller) Job(id string) (Job, bool) {
 	return job, ok
 }
 
+// LastJob is the newest job of a kind for a server, so a page opened later
+// still shows how the last install went; nil when there was none since the
+// manager started.
+func (c *Controller) LastJob(serverID, kind string) *Job {
+	c.jobsMu.RLock()
+	defer c.jobsMu.RUnlock()
+	var last *Job
+	for _, job := range c.jobs {
+		if job.ServerID == serverID && job.Kind == kind && (last == nil || job.CreatedAt.After(last.CreatedAt)) {
+			j := job
+			last = &j
+		}
+	}
+	return last
+}
+
 // LogNames are the logs an operator can ask for by name instead of by path.
 var LogNames = map[string]string{
 	// The game's own log, rewritten at every start.
 	"game": filepath.Join("ConanSandbox", "Saved", "Logs", "ConanSandbox.log"),
 	// What the process printed, kept across starts by the manager.
 	"process": "conan-manager-process.log",
+	// What SteamCMD printed while installing, updating or verifying.
+	"steamcmd": "conan-manager-steamcmd.log",
 }
+
+// ErrLogMissing reports a log that does not exist yet, such as the game log
+// before the first start.
+var ErrLogMissing = errors.New("log does not exist yet")
 
 // TailLog returns the last lines of a server log, optionally only those
 // containing filter. The log is a name from LogNames or a path inside the
@@ -819,6 +847,9 @@ func (c *Controller) TailLog(ctx context.Context, id, log string, limit int, fil
 	relative, err := filepath.Rel(base, target)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return nil, fmt.Errorf("log path must be inside server install directory")
+	}
+	if _, err := os.Stat(target); errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrLogMissing
 	}
 	return c.Logs.Search(target, limit, filter)
 }

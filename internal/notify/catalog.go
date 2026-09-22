@@ -27,7 +27,7 @@ var kindEvents = map[string][]events.Type{
 	server.MsgCrash:            {events.ServerCrashed},
 	server.MsgTechnical:        {events.ServerRestarting, events.ServerHang},
 	server.MsgAttention: {events.ServerRestartAbandoned, events.ServerStartFailed, events.ServerRecovery,
-		events.DatabaseCorrupt, events.UpdateFailed, events.BackupFailed},
+		events.DatabaseCorrupt, events.UpdateFailed, events.InstallFailed, events.BackupFailed},
 }
 
 // Categories lists the kinds of message a channel can take.

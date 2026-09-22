@@ -28,6 +28,9 @@ const (
 	ServerRecovery         Type = "server.recovery_required"
 	ScheduleFailed         Type = "schedule.failed"
 	HookFailed             Type = "hook.failed"
+	InstallStarted         Type = "install.started"
+	InstallFinished        Type = "install.finished"
+	InstallFailed          Type = "install.failed"
 	UpdateAvailable        Type = "update.available"
 	UpdateStarted          Type = "update.started"
 	UpdateFinished         Type = "update.finished"
@@ -173,7 +176,7 @@ func SeverityOf(t Type) Severity { return defaultSeverity(t) }
 func defaultSeverity(t Type) Severity {
 	switch t {
 	case ServerCrashed, ServerRestartAbandoned, ServerRecovery, ServerStartFailed,
-		ScheduleFailed, HookFailed, UpdateFailed, BackupFailed, DatabaseCorrupt:
+		ScheduleFailed, HookFailed, UpdateFailed, InstallFailed, BackupFailed, DatabaseCorrupt:
 		return Error
 	case ServerHang, ServerWatchdogStop, ServerUnavailable, ServerKilled, ServerRestarting, UpdateAvailable, RconFailed:
 		return Warning

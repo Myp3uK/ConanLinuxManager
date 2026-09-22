@@ -25,6 +25,7 @@ import (
 	"github.com/example/conan-manager/internal/scheduler"
 	"github.com/example/conan-manager/internal/security"
 	"github.com/example/conan-manager/internal/server"
+	"github.com/example/conan-manager/internal/steamcmd"
 	"github.com/example/conan-manager/internal/store"
 	"github.com/example/conan-manager/internal/unitservice"
 	"github.com/example/conan-manager/internal/webui"
@@ -675,6 +676,9 @@ func (a *api) server(w http.ResponseWriter, r *http.Request) {
 			"health":    a.control.Health(id),
 			"stats":     a.control.Stats(id),
 			"rcon":      a.control.RconState(id),
+			"install":   a.control.LastJob(id, "install"),
+			// The installed build; empty while the game is not installed.
+			"build": installedBuild(value),
 		})
 	case http.MethodPatch:
 		a.patchServer(w, r, id)
@@ -792,12 +796,16 @@ func (a *api) serverAction(w http.ResponseWriter, r *http.Request, id, action st
 			path = r.URL.Query().Get("name")
 		}
 		lines, err := a.control.TailLog(r.Context(), id, path, limit, r.URL.Query().Get("filter"))
+		if path == "" {
+			path = "game"
+		}
+		if errors.Is(err, controller.ErrLogMissing) {
+			writeJSON(w, http.StatusOK, map[string]any{"path": path, "lines": []string{}, "missing": true})
+			return
+		}
 		if err != nil {
 			a.fail(w, r, http.StatusBadRequest, err)
 			return
-		}
-		if path == "" {
-			path = "game"
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"path": path, "lines": lines})
 		return
@@ -999,6 +1007,11 @@ func (a *api) serverAction(w http.ResponseWriter, r *http.Request, id, action st
 		"process":   a.control.Snapshot(id),
 		"lifecycle": a.control.Lifecycle(id),
 	})
+}
+
+func installedBuild(cfg server.Config) string {
+	build, _ := steamcmd.InstalledBuild(cfg.InstallDir)
+	return build
 }
 
 // setFields names the fields a patch sets, for the audit log; the values

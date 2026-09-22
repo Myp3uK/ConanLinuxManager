@@ -214,16 +214,21 @@ function ask(text, { ok = 'Да', danger = true, extra = [], cancel = true } = {
 }
 
 const JOB_NAMES = { stop: 'Остановка', start: 'Запуск', install: 'Установка', restart: 'Рестарт', update: 'Обновление', backup: 'Бэкап', restore: 'Восстановление' };
+// What a job is doing, said while it starts.
+const JOB_BEGUN = { stop: 'Останавливается', start: 'Запускается', install: 'Устанавливается', restart: 'Перезапускается',
+  update: 'Обновляется', backup: 'Создаётся бэкап', restore: 'Восстанавливается' };
 
 // runJob follows a background job to its end and reports how it went.
 async function runJob(job) {
   const name = JOB_NAMES[job.kind] || job.kind;
-  toast(name + ': начато', 'info', 3000);
+  toast(JOB_BEGUN[job.kind] || name + ': начато', 'info', 3000);
   while (job.status === 'running' || job.status === 'queued') {
     await new Promise(r => setTimeout(r, 2000));
     try { job = await api('GET', '/jobs/' + enc(job.id)); } catch (e) { toast(name + ': ' + e.message, 'bad'); return job; }
   }
   if (job.status === 'failed') toast(name + ': ошибка - ' + (job.error || 'без подробностей'), 'bad');
+  // A started process still loads its world; «Работает» comes after that.
+  else if (job.kind === 'start') toast('Процесс запущен, сервер загружает мир', 'info');
   else toast(name + ': готово' + (job.error ? ' (' + job.error + ')' : ''));
   return job;
 }
@@ -246,7 +251,7 @@ function fmtBytes(n) {
 }
 
 const STATES = {
-  idle: ['Остановлен', ''], starting: ['Запускается', 'warn'], loading: ['Загружается', 'warn'], running: ['Работает', 'ok'],
+  idle: ['Остановлен', ''], starting: ['Запускается', 'warn'], loading: ['Запускается', 'warn'], running: ['Работает', 'ok'],
   stopping: ['Останавливается', 'warn'], flushing: ['Сохраняет', 'warn'], installing: ['Устанавливается', 'warn'],
   configuring: ['Настраивается', 'warn'], verifying: ['Проверка базы', 'warn'], restoring: ['Восстановление', 'warn'],
   deleting: ['Удаляется', 'warn'], recovery_required: ['Нужно восстановление', 'bad'],
@@ -262,7 +267,7 @@ function stateBadge(state) {
   return h('span', { class: 'badge ' + kind, text: label });
 }
 const AVAILABILITY = {
-  responsive: ['Отвечает', 'ok'], starting: ['Загружается', 'warn'], suspect: ['Задержки', 'warn'],
+  responsive: ['Отвечает', 'ok'], starting: ['Запускается', 'warn'], suspect: ['Задержки', 'warn'],
   unavailable: ['Не отвечает', 'bad'], inactive: ['-', ''],
 };
 function availabilityBadge(a) {
@@ -399,7 +404,7 @@ function actionButtons(detail, refresh) {
   const start = h('button', { class: 'primary', text: 'Запустить', disabled: state !== 'idle',
     onclick: e => act(e.target, async () => {
       const r = await api('POST', `/servers/${enc(id)}/start`);
-      if (r && r.kind === 'start') { refresh(); await runJob(r); } else toast('Запуск отправлен');
+      if (r && r.kind === 'start') { refresh(); await runJob(r); } else toast('Запускается', 'info', 3000);
       refresh();
     }) });
   const stop = h('button', { text: 'Остановить', disabled: !running,
@@ -753,7 +758,7 @@ async function gameSettings(ctx, running, reload) {
   } catch (e) { return h('div', { class: 'notice bad', text: 'Не удалось прочитать настройки игры: ' + e.message }); }
   // Unreal matches sections and keys without regard to case.
   const current = f => {
-    const section = views[f.file].sections.find(s => s.name.toLowerCase() === f.section.toLowerCase());
+    const section = (views[f.file].sections || []).find(s => s.name.toLowerCase() === f.section.toLowerCase());
     const entry = section && section.entries.find(e => e.key.toLowerCase() === f.key.toLowerCase());
     return entry ? entry.value : null;
   };
@@ -848,15 +853,56 @@ async function viewServer(id, tab) {
   }
 }
 
+// logSource is the log the logs tab opens with, set by links to it.
+let logSource = null;
+const LOG_MISSING = {
+  game: 'Лога игры ещё нет: игра начинает его при первом запуске.',
+  process: 'Сервер ещё не запускался из менеджера.',
+  steamcmd: 'SteamCMD для этого сервера ещё не запускался.',
+};
+function openLog(id, source) {
+  logSource = source;
+  location.hash = `#/server/${enc(id)}/logs`;
+}
+
+// installNotice tells how the game install stands: running, failed with a
+// retry, or never done.
+function installNotice(d, ctx) {
+  const job = d.install;
+  const id = d.server.id;
+  const log = h('button', { text: 'Лог SteamCMD', onclick: () => openLog(id, 'steamcmd') });
+  const install = text => h('button', { class: 'primary', text, onclick: e => act(e.target, async () => {
+    const job = await api('POST', `/servers/${enc(id)}/install`);
+    ctx.refresh();
+    await runJob(job);
+    ctx.refresh();
+  }) });
+  if (d.lifecycle.state === 'installing' || (job && ['running', 'queued'].includes(job.status))) {
+    return h('div', { class: 'notice' }, h('strong', { text: 'Идёт установка. ' }),
+      'SteamCMD качает игру, около 4 ГБ. Ход загрузки - в логе.', h('div', { class: 'row', style: 'margin-top:8px' }, log));
+  }
+  if (job && job.status === 'failed') {
+    return h('div', { class: 'notice bad' }, h('strong', { text: 'Установка не удалась: ' }), job.error || 'без подробностей',
+      h('div', { class: 'row', style: 'margin-top:8px' }, install('Повторить установку'), log));
+  }
+  if (!d.build && d.lifecycle.state === 'idle') {
+    return h('div', { class: 'notice' }, h('strong', { text: 'Игра не установлена. ' }), 'Без неё сервер не запустится.',
+      h('div', { class: 'row', style: 'margin-top:8px' }, install('Установить'), log));
+  }
+  return null;
+}
+
 const TAB_VIEWS = {
   async overview(body, ctx) {
     const info = h('div', { class: 'panel' });
     const recovery = h('div');
+    const installBox = h('div');
     const resources = h('div');
     const update = h('div', { class: 'panel' });
-    replace(body, recovery, resources, info, update);
+    replace(body, installBox, recovery, resources, info, update);
     const draw = d => {
       const s = d.server, p = d.process || {}, hl = d.health || {}, a = hl.availability || {};
+      replace(installBox, installNotice(d, ctx));
       replace(recovery, s.recovery_reason ? h('div', { class: 'notice bad' },
         h('strong', { text: 'Запуск заблокирован. ' }), s.recovery_reason,
         h('div', { class: 'row', style: 'margin-top:8px' },
@@ -959,7 +1005,10 @@ const TAB_VIEWS = {
   },
 
   async logs(body, ctx) {
-    const name = h('select', {}, h('option', { value: 'game', text: 'Игра (ConanSandbox.log)' }), h('option', { value: 'process', text: 'Процесс (вывод)' }));
+    const name = h('select', {}, h('option', { value: 'game', text: 'Игра (ConanSandbox.log)' }), h('option', { value: 'process', text: 'Процесс (вывод)' }),
+      h('option', { value: 'steamcmd', text: 'SteamCMD (установка и обновления)' }));
+    name.value = logSource || 'game';
+    logSource = null;
     const filter = h('input', { placeholder: 'Фильтр, например Join succeeded', style: 'flex:1' });
     const limit = h('select', {}, [200, 500, 1000, 5000].map(n => h('option', { value: n, text: n + ' строк' })));
     const auto = h('input', { type: 'checkbox', checked: true });
@@ -969,6 +1018,7 @@ const TAB_VIEWS = {
         const q = `name=${enc(name.value)}&limit=${limit.value}` + (filter.value ? `&filter=${enc(filter.value)}` : '');
         const r = await api('GET', `/servers/${enc(ctx.id)}/logs?${q}`);
         const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 30 || !out.childNodes.length;
+        if (r.missing) { replace(out, h('span', { class: 'muted', text: LOG_MISSING[name.value] || 'Этого лога ещё нет.' })); return; }
         replace(out, r.lines.length ? r.lines.map(line => h('span', {
           class: /\b(Error|Fatal|Critical)\b/.test(line) ? 'err' : /\bWarning\b/.test(line) ? 'hit' : '',
           text: line + '\n' })) : h('span', { class: 'muted', text: filter.value ? 'Нет строк с таким текстом.' : 'Лог пуст.' }));

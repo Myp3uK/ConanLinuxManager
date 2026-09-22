@@ -242,7 +242,13 @@ func (c *Controller) installFiles(ctx context.Context, cfg server.Config, valida
 		return err
 	}
 	defer c.release(cfg.ID)
-	return c.Steam.UpdateServer(ctx, cfg.SteamCMDDir, cfg.InstallDir, cfg.Branch, validate, nil)
+	what := "update"
+	if validate {
+		what = "verify"
+	}
+	out := openSteamLog(cfg, what)
+	defer out.Close()
+	return c.Steam.UpdateServer(ctx, cfg.SteamCMDDir, cfg.InstallDir, cfg.Branch, validate, out)
 }
 
 // stopAndWait stops a server and waits until it is idle, as a restart does.

@@ -64,6 +64,11 @@ func (c *Controller) ReadConfig(ctx context.Context, id, file string) (ConfigVie
 		return ConfigView{}, err
 	}
 	view := ConfigView{File: file, Path: path, Exists: exists, Content: content, Sections: gameconfig.Parse(content)}
+	if view.Sections == nil {
+		// A file the game has not written yet has no sections; clients get
+		// an empty list rather than null.
+		view.Sections = []gameconfig.Section{}
+	}
 	if file == "Game" && gameconfig.SettingsFor(cfg).Managed() {
 		view.Managed = []string{"[/Script/ConanSandbox.ConanGameMode] PeriodicBackupInterval"}
 	}

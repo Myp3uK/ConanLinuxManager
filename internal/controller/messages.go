@@ -25,6 +25,7 @@ var attentionReasons = map[events.Type]string{
 	events.ServerRecovery:         "нужно восстановление базы",
 	events.DatabaseCorrupt:        "база мира повреждена",
 	events.UpdateFailed:           "обновление не удалось",
+	events.InstallFailed:          "установка не удалась",
 	events.BackupFailed:           "бэкап не удался",
 }
 

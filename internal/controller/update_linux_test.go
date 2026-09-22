@@ -33,7 +33,9 @@ func writeManifest(t *testing.T, install, build string) {
 	}
 }
 
-func (f *fakeSteam) InstallServer(ctx context.Context, cfg server.Config) error { return nil }
+func (f *fakeSteam) InstallServer(ctx context.Context, cfg server.Config, output io.Writer) error {
+	return nil
+}
 
 func (f *fakeSteam) LatestBuild(ctx context.Context, dir, branch string) (string, error) {
 	f.mu.Lock()
