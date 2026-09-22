@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -867,5 +868,20 @@ func (c *Controller) TailLog(ctx context.Context, id, log string, limit int, fil
 	if _, err := os.Stat(target); errors.Is(err, fs.ErrNotExist) {
 		return nil, ErrLogMissing
 	}
-	return c.Logs.Search(target, limit, filter)
+	lines, err := c.Logs.Search(target, limit, filter)
+	for i, line := range lines {
+		lines[i] = stripANSI(line)
+	}
+	return lines, err
+}
+
+// ansiEscape matches terminal colour and cursor codes: SteamCMD writes
+// "ESC[0m" resets, which the browser would show as garbage.
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+
+func stripANSI(line string) string {
+	if !strings.Contains(line, "\x1b") {
+		return line
+	}
+	return strings.ReplaceAll(ansiEscape.ReplaceAllString(line, ""), "\x1b", "")
 }

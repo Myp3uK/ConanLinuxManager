@@ -1150,7 +1150,7 @@ const TAB_VIEWS = {
         const atBottom = follow || !out.childNodes.length;
         if (r.missing) { replace(out, h('span', { class: 'muted', text: LOG_MISSING[name.value] || 'Этого лога ещё нет.' })); return; }
         replace(out, r.lines.length ? r.lines.map(line => h('span', {
-          class: /\b(Error|Fatal|Critical)\b/.test(line) ? 'err' : /\bWarning\b/.test(line) ? 'hit' : '',
+          class: /\b(Error|Fatal|Critical)\b|ERROR!|\bFailed\b/.test(line) ? 'err' : /\bWarning\b/.test(line) ? 'hit' : '',
           text: line + '\n' })) : h('span', { class: 'muted', text: filter.value ? 'Нет строк с таким текстом.' : 'Лог пуст.' }));
         if (atBottom) out.scrollTop = out.scrollHeight;
       } catch (e) { replace(out, h('span', { class: 'err', text: e.message })); }
