@@ -28,7 +28,7 @@ func newFakeStore(items ...Schedule) *fakeStore {
 	return f
 }
 
-func (f *fakeStore) ClaimDue(_ context.Context, now time.Time) ([]Claim, error) {
+func (f *fakeStore) ClaimDue(_ context.Context, now time.Time, _ Lead) ([]Claim, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.claimErr != nil {

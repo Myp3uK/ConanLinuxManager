@@ -104,7 +104,7 @@ func TestClaimDueAdvancesAndRecordsRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	claims, err := r.ClaimDue(ctx, now)
+	claims, err := r.ClaimDue(ctx, now, nil)
 	if err != nil || len(claims) != 1 {
 		t.Fatalf("claims: %+v %v", claims, err)
 	}
@@ -120,7 +120,7 @@ func TestClaimDueAdvancesAndRecordsRun(t *testing.T) {
 		t.Fatalf("next_run not advanced at claim time: %v", stored.NextRun)
 	}
 	// The same instant must not produce a second claim.
-	again, err := r.ClaimDue(ctx, now)
+	again, err := r.ClaimDue(ctx, now, nil)
 	if err != nil || len(again) != 0 {
 		t.Fatalf("double claim: %+v %v", again, err)
 	}
@@ -148,7 +148,7 @@ func TestMarkInterruptedClosesOrphanedRuns(t *testing.T) {
 		Mode: "interval", IntervalSeconds: 60, NextRun: now}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.ClaimDue(ctx, now); err != nil {
+	if _, err := r.ClaimDue(ctx, now, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -235,7 +235,7 @@ func TestClaimSkipsScheduleChangedMeanwhile(t *testing.T) {
 	if _, err := db.DB().Exec(`UPDATE schedules SET enabled=0 WHERE server_id='one'`); err != nil {
 		t.Fatal(err)
 	}
-	claims, err := r.ClaimDue(ctx, now)
+	claims, err := r.ClaimDue(ctx, now, nil)
 	if err != nil || len(claims) != 0 {
 		t.Fatalf("claimed a disabled schedule: %+v %v", claims, err)
 	}
@@ -253,7 +253,7 @@ VALUES('one','stop',1,'cron','0 0 31 2 *','UTC',?,?)`,
 		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
-	claims, err := r.ClaimDue(ctx, now)
+	claims, err := r.ClaimDue(ctx, now, nil)
 	if err != nil || len(claims) != 0 {
 		t.Fatalf("claims: %+v %v", claims, err)
 	}
@@ -267,5 +267,34 @@ VALUES('one','stop',1,'cron','0 0 31 2 *','UTC',?,?)`,
 	runs, err := r.ScheduleRuns(ctx, "one", 50)
 	if err != nil || len(runs) != 1 || runs[0].Status != "failed" {
 		t.Fatalf("no failure recorded: %+v %v", runs, err)
+	}
+}
+
+// A lead claims a run before its time, keeps that time as DueAt and moves
+// next_run past it, so warnings can precede an action that stays on time.
+func TestClaimDueWithLeadClaimsAhead(t *testing.T) {
+	r, _ := newScheduleRepo(t)
+	ctx := context.Background()
+	due := time.Date(2026, 9, 20, 6, 0, 0, 0, time.UTC)
+	if err := r.SetSchedule(ctx, scheduler.Schedule{ServerID: "one", Action: "restart", Enabled: true,
+		Mode: "cron", CronExpression: "0 6 * * *", Timezone: "UTC", NextRun: due}); err != nil {
+		t.Fatal(err)
+	}
+	lead := func(scheduler.Schedule) time.Duration { return 15 * time.Minute }
+	if claims, err := r.ClaimDue(ctx, due.Add(-16*time.Minute), lead); err != nil || len(claims) != 0 {
+		t.Fatalf("claimed too early: %+v %v", claims, err)
+	}
+	if claims, err := r.ClaimDue(ctx, due.Add(-10*time.Minute), nil); err != nil || len(claims) != 0 {
+		t.Fatalf("claimed ahead without a lead: %+v %v", claims, err)
+	}
+	claims, err := r.ClaimDue(ctx, due.Add(-15*time.Minute), lead)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claims: %+v %v", claims, err)
+	}
+	if !claims[0].DueAt.Equal(due) || !claims[0].NextRun.Equal(due.Add(24*time.Hour)) {
+		t.Fatalf("due %v, next %v", claims[0].DueAt, claims[0].NextRun)
+	}
+	if again, err := r.ClaimDue(ctx, due, lead); err != nil || len(again) != 0 {
+		t.Fatalf("claimed twice: %+v %v", again, err)
 	}
 }

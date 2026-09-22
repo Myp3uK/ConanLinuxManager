@@ -105,14 +105,33 @@ func (r *Repository) due(ctx context.Context, now time.Time) ([]dueSchedule, err
 // ClaimDue advances next_run and opens a history row in a single transaction.
 // Advancing before the action runs is deliberate: a crash mid-action leaves an
 // interrupted run in the history instead of replaying the action on restart.
-func (r *Repository) ClaimDue(ctx context.Context, now time.Time) ([]scheduler.Claim, error) {
-	items, err := r.due(ctx, now)
+func (r *Repository) ClaimDue(ctx context.Context, now time.Time, lead scheduler.Lead) ([]scheduler.Claim, error) {
+	horizon := now
+	if lead != nil {
+		horizon = now.Add(scheduler.MaxLead)
+	}
+	items, err := r.due(ctx, horizon)
 	if err != nil {
 		return nil, err
 	}
 	claims := make([]scheduler.Claim, 0, len(items))
 	for _, item := range items {
-		next, err := item.NextOccurrence(now)
+		if item.NextRun.After(now) {
+			ahead := time.Duration(0)
+			if lead != nil {
+				ahead = min(max(lead(item.Schedule), 0), scheduler.MaxLead)
+			}
+			if item.NextRun.Sub(now) > ahead {
+				continue
+			}
+		}
+		// A run claimed ahead of its time is followed by the occurrence after
+		// that time, not after now, which would be the same run again.
+		base := now
+		if item.NextRun.After(base) {
+			base = item.NextRun
+		}
+		next, err := item.NextOccurrence(base)
 		if err != nil {
 			// The stored specification can never fire again. Disabling it makes
 			// the problem visible instead of re-claiming it every second.
@@ -167,6 +186,7 @@ func (r *Repository) claim(ctx context.Context, item dueSchedule, next, now time
 		return scheduler.Claim{}, false, err
 	}
 	claim := scheduler.Claim{Schedule: item.Schedule, RunID: runID}
+	claim.DueAt = item.NextRun
 	claim.NextRun = next
 	return claim, true, nil
 }

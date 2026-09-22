@@ -215,7 +215,7 @@ func (c *Controller) Restart(ctx context.Context, id string) error {
 // function blocks until every action it started has finished, so shutdown can
 // wait for a scheduled stop to persist its database.
 func (c *Controller) StartScheduler(ctx context.Context) func() {
-	runner := &scheduler.Runner{Schedules: c.Repo, Logger: c.Logger, Execute: c.executeSchedule}
+	runner := &scheduler.Runner{Schedules: c.Repo, Logger: c.Logger, Execute: c.executeSchedule, Lead: c.scheduleLead}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -224,9 +224,24 @@ func (c *Controller) StartScheduler(ctx context.Context) func() {
 	return func() { <-done }
 }
 
-// tooFreshToRestart applies the minimum uptime: a server started shortly
-// before a scheduled restart, by hand or after a crash, is left alone.
-func (c *Controller) tooFreshToRestart(cfg server.Config) (bool, time.Duration) {
+// scheduleLead hands a scheduled stop or restart to the controller as early
+// as its first player warning, so the warnings come before the set time and
+// the action happens at it.
+func (c *Controller) scheduleLead(s scheduler.Schedule) time.Duration {
+	if s.Action != "restart" && s.Action != "stop" {
+		return 0
+	}
+	cfg, err := c.Repo.Get(context.Background(), s.ServerID)
+	if err != nil || !cfg.Warnings.Enabled() {
+		return 0
+	}
+	marks := cfg.Warnings.Marks()
+	return time.Duration(marks[0]) * time.Minute
+}
+
+// tooFreshToRestart applies the minimum uptime at the time of the restart: a
+// server started shortly before it, by hand or after a crash, is left alone.
+func (c *Controller) tooFreshToRestart(cfg server.Config, at time.Time) (bool, time.Duration) {
 	if cfg.RestartMinUptimeSeconds <= 0 || c.Lifecycle(cfg.ID).State != "running" {
 		return false, 0
 	}
@@ -234,7 +249,7 @@ func (c *Controller) tooFreshToRestart(cfg server.Config) (bool, time.Duration) 
 	if started.IsZero() {
 		return false, 0
 	}
-	uptime := time.Since(started)
+	uptime := at.Sub(started)
 	return uptime < time.Duration(cfg.RestartMinUptimeSeconds)*time.Second, uptime
 }
 
@@ -244,20 +259,24 @@ func (c *Controller) executeSchedule(ctx context.Context, item scheduler.Schedul
 		// A deleted server cannot come back by retrying.
 		return scheduler.Permanent(err)
 	}
+	due := item.DueAt
+	if due.IsZero() {
+		due = time.Now()
+	}
 	switch item.Action {
 	case "start":
 		err = c.Start(ctx, item.ServerID)
 	case "stop":
-		if err = c.warnPlayers(ctx, cfg, "stop"); err == nil {
+		if err = c.warnUntil(ctx, cfg, "stop", due); err == nil {
 			err = c.Stop(ctx, item.ServerID)
 		}
 	case "restart":
-		if skip, uptime := c.tooFreshToRestart(cfg); skip {
+		if skip, uptime := c.tooFreshToRestart(cfg, due); skip {
 			c.emit(events.ScheduleSkipped, cfg, "Scheduled restart skipped: the server has not run long enough",
 				map[string]string{"uptime": uptime.Round(time.Second).String(), "minimum": (time.Duration(cfg.RestartMinUptimeSeconds) * time.Second).String()})
 			return nil
 		}
-		if err = c.warnPlayers(ctx, cfg, "restart"); err == nil {
+		if err = c.warnUntil(ctx, cfg, "restart", due); err == nil {
 			err = c.Restart(ctx, item.ServerID)
 		}
 	default:

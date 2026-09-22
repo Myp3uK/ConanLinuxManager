@@ -77,3 +77,40 @@ func TestAnnounceReportsRconErrors(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// A scheduled action warns its minutes before the set time and happens at
+// that time, whether anyone is online or not.
+func TestCountdownKeepsTheActionOnTime(t *testing.T) {
+	due := time.Date(2026, 9, 22, 6, 0, 0, 0, time.UTC)
+	w := server.Warnings{Steps: []server.WarningStep{{Minutes: 15, Message: "{minutes}"}, {Minutes: 10, Message: "{minutes}"}, {Minutes: 5, Message: "{minutes}"}}}
+	for _, tc := range []struct {
+		name   string
+		start  time.Duration
+		online int
+		fail   error
+		said   []string
+	}{
+		{"players online", -15 * time.Minute, 2, nil, []string{"15@05:45", "10@05:50", "5@05:55"}},
+		{"nobody online", -15 * time.Minute, 0, nil, nil},
+		{"claimed late", -7 * time.Minute, 1, nil, []string{"5@05:55"}},
+		{"rcon down", -15 * time.Minute, 0, errors.New("rcon down"), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := due.Add(tc.start)
+			var said []string
+			err := countdown(context.Background(), w, "restart", due, func() time.Time { return clock },
+				func() (int, error) { return tc.online, tc.fail },
+				func(text string) error { said = append(said, text+"@"+clock.Format("15:04")); return nil },
+				func(_ context.Context, d time.Duration) error { clock = clock.Add(d); return nil })
+			if !clock.Equal(due) {
+				t.Fatalf("returned at %s, want exactly %s", clock.Format("15:04:05"), due.Format("15:04:05"))
+			}
+			if !reflect.DeepEqual(said, tc.said) {
+				t.Fatalf("said %v, want %v", said, tc.said)
+			}
+			if (err != nil) != (tc.fail != nil) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}

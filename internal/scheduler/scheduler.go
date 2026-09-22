@@ -21,7 +21,18 @@ type Schedule struct {
 	FailureCount    int       `json:"failure_count"`
 	NextRun         time.Time `json:"next_run"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	// DueAt is the time a claimed run is for. With a lead the run is claimed
+	// before it, so the action can warn players and still happen on time.
+	DueAt time.Time `json:"-"`
 }
+
+// Lead tells how long before its time a schedule is handed to Execute; the
+// controller uses it to warn players ahead of a restart. It is capped at
+// MaxLead.
+type Lead func(Schedule) time.Duration
+
+// MaxLead bounds a lead: the longest player warning is two hours.
+const MaxLead = 2 * time.Hour
 
 type Run struct {
 	ID         int64     `json:"id"`
@@ -112,8 +123,9 @@ func (s *Schedule) Validate() error {
 // Store is the persistence the runner needs. Claiming, advancing and recording
 // are separate operations so a failure in one is visible in the history.
 type Store interface {
-	// ClaimDue atomically advances every due schedule and opens a history row.
-	ClaimDue(ctx context.Context, now time.Time) ([]Claim, error)
+	// ClaimDue atomically advances every schedule due by now, or by now plus
+	// its lead, and opens a history row.
+	ClaimDue(ctx context.Context, now time.Time, lead Lead) ([]Claim, error)
 	// CompleteRun closes a history row with its outcome.
 	CompleteRun(ctx context.Context, runID int64, finished time.Time, runErr error) error
 	// Retry moves next_run earlier for a transient failure and stores the count.
@@ -127,6 +139,7 @@ type Store interface {
 type Runner struct {
 	Schedules  Store
 	Execute    func(context.Context, Schedule) error
+	Lead       Lead
 	RetryBase  time.Duration
 	MaxRetries int
 	Logger     *slog.Logger
@@ -182,7 +195,7 @@ func (r *Runner) Wait() { r.wg.Wait() }
 // a long restart never delays the other servers' schedules.
 func (r *Runner) RunOnce(ctx context.Context, now time.Time) error {
 	r.defaults()
-	claims, err := r.Schedules.ClaimDue(ctx, now.UTC())
+	claims, err := r.Schedules.ClaimDue(ctx, now.UTC(), r.Lead)
 	if err != nil {
 		return err
 	}

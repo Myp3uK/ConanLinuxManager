@@ -62,9 +62,28 @@ async function api(method, path, body) {
 const enc = encodeURIComponent;
 
 function toast(message, kind = 'ok', ms = 5000) {
-  const el = h('div', { class: 'toast ' + kind, text: message });
+  const el = h('div', { class: 'toast ' + kind, text: message, onclick: () => leave() });
+  const leave = () => {
+    if (el.classList.contains('leaving')) return;
+    el.classList.add('leaving');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+    setTimeout(() => el.remove(), 600);
+  };
   document.getElementById('toasts').append(el);
-  setTimeout(() => el.remove(), kind === 'bad' ? Math.max(ms, 9000) : ms);
+  setTimeout(leave, kind === 'bad' ? Math.max(ms, 9000) : ms);
+}
+
+// fillHeight makes el reach the bottom of the window, less reserve pixels,
+// and keeps it so when the window is resized.
+function fillHeight(el, reserve = 24, min = 240) {
+  const fit = () => {
+    if (!el.isConnected) return;
+    el.style.height = Math.max(min, window.innerHeight - el.getBoundingClientRect().top - reserve) + 'px';
+  };
+  requestAnimationFrame(fit);
+  window.addEventListener('resize', fit);
+  onLeave(() => window.removeEventListener('resize', fit));
+  return fit;
 }
 
 // act runs an action from a button: the button is disabled meanwhile and a
@@ -159,7 +178,7 @@ function severityBadge(s) {
 }
 
 function facts(pairs) {
-  return h('dl', { class: 'facts' }, pairs.filter(Boolean).map(([k, v]) => [h('dt', { text: k }), h('dd', {}, v)]));
+  return h('dl', { class: 'facts' }, pairs.filter(Boolean).map(([k, v]) => [h('dt', {}, k), h('dd', {}, v)]));
 }
 function table(headers, rows, empty = 'Пусто') {
   if (!rows.length) return h('p', { class: 'muted', text: empty });
@@ -167,14 +186,14 @@ function table(headers, rows, empty = 'Пусто') {
     h('thead', {}, h('tr', {}, headers.map(x => h('th', { text: x })))),
     h('tbody', {}, rows.map(r => h('tr', {}, r.map(c => h('td', {}, c)))))));
 }
-// portWithRaw shows the Raw UDP port the game takes next to the game port.
-function portWithRaw(input) {
-  const raw = h('span', { class: 'muted small nowrap' });
-  const show = () => { const n = parseInt(input.value, 10); raw.textContent = n > 0 ? `Raw UDP: ${n + 1}` : ''; };
-  input.addEventListener('input', show);
+// rawPort is a locked field that follows the game port: the game always
+// takes the next port for Raw UDP.
+function rawPort(gameInput) {
+  const raw = h('input', { type: 'number', disabled: true });
+  const show = () => { const n = parseInt(gameInput.value, 10); raw.value = n > 0 ? n + 1 : ''; };
+  gameInput.addEventListener('input', show);
   show();
-  input.style.flex = '1';
-  return h('div', { class: 'row', style: 'flex-wrap:nowrap' }, input, raw);
+  return raw;
 }
 
 function field(label, input, hint) {
@@ -519,7 +538,8 @@ async function viewNewServer() {
       field('Каталог установки', install, 'Может быть на отдельном диске.'),
       field('Каталог SteamCMD', steam, 'Общий для всех серверов.'),
       field('Ветка', branch),
-      field('Игровой порт', portWithRaw(gamePort), 'Игра занимает этот порт и следующий за ним (Raw UDP). Оба нужно открыть в файрволе.'),
+      field('Игровой порт', gamePort),
+      field('Raw UDP-порт', rawPort(gamePort), 'Игра всегда занимает следующий за игровым порт. Меняется вместе с игровым; открыть в файрволе нужно оба.'),
       field('Query-порт', queryPort),
       field('Аргументы запуска', args),
       field('Интервал бэкапов игры, с', backup, '0 - оставить как в игре. Каждый бэкап копирует базу целиком: чем реже, тем меньше износ SSD.'),
@@ -692,11 +712,10 @@ const TAB_VIEWS = {
           }) }),
           h('a', { href: `#/server/${enc(s.id)}/backups`, text: 'Восстановить из бэкапа' }))) : null);
       replace(resources, statsPanel(d));
-      replace(info, h('h2', { text: 'Состояние' }), facts([
-        ['Состояние', stateBadge(d.lifecycle.state)],
+      replace(info, h('h2', { class: 'row' }, 'Состояние', stateBadge(d.lifecycle.state)), facts([
         d.lifecycle.error && ['Ошибка', d.lifecycle.error],
         ['Процесс', p.pid ? `PID ${p.pid}, запущен ${fmtTime(p.started_at)}` : '-'],
-        ['Доступность', h('span', {}, availabilityBadge(a), a.checked_at && isSet(a.checked_at) ? h('span', { class: 'muted small', text: '  проверено ' + fmtAgo(a.checked_at) }) : null)],
+        [h('span', { class: 'row', style: 'gap:6px' }, 'Виден игрокам', helpIcon('Менеджер раз в 15 секунд опрашивает query-порт сервера - так же, как список серверов в игре.\n«Отвечает» - сервер загрузился и виден игрокам.\nСостояние в заголовке - это процесс: запущен он или нет. Процесс может работать, но не отвечать: пока мир грузится или если сервер завис. Долгое молчание работающего сервера - признак зомби.')), h('span', {}, availabilityBadge(a), a.checked_at && isSet(a.checked_at) ? h('span', { class: 'muted small', text: '  проверено ' + fmtAgo(a.checked_at) }) : null)],
         a.last_error && ['Ошибка query', a.last_error],
         d.lifecycle.state === 'running' && ['RCON', h('span', {}, rconBadge(d.rcon), d.rcon && d.rcon.error ? h('span', { class: 'muted small', text: '  ' + d.rcon.error }) : null)],
         hl.recent_crashes > 0 && ['Падения', `${hl.recent_crashes} за 30 мин` + (hl.last_exit ? `, последнее ${fmtTime(hl.last_exit.at)} (${hl.last_exit.signal ? 'сигнал ' + hl.last_exit.signal : 'код ' + hl.last_exit.code})` : '')],
@@ -737,7 +756,7 @@ const TAB_VIEWS = {
 
   async console(body, ctx) {
     const playersBox = h('div');
-    const out = h('pre', { class: 'log', style: 'min-height:260px' });
+    const out = h('pre', { class: 'log rcon-out' });
     const input = h('input', { placeholder: 'Команда RCON, например listplayers', style: 'flex:1', autocomplete: 'off' });
     const broadcast = h('input', { placeholder: 'Сообщение всем игрокам', style: 'flex:1' });
     const history = []; let cursor = 0;
@@ -770,16 +789,17 @@ const TAB_VIEWS = {
           table(columns, r.players.map(p => columns.map(c => p[c] || '')), 'Никого нет'));
       } catch (e) { replace(playersBox, h('div', { class: 'notice', text: e.message })); }
     };
-    replace(body,
-      h('div', { class: 'panel' }, h('div', { class: 'head' }, h('h2', { text: 'Игроки' }), h('span', { class: 'spacer' }),
-        h('button', { text: 'Обновить', onclick: e => act(e.target, () => loadPlayers(true)) })), playersBox),
-      h('div', { class: 'panel' }, h('h2', { text: 'Консоль RCON' }), out,
+    const layout = h('div', { class: 'rcon-layout' },
+      h('div', { class: 'panel rcon-console' }, h('h2', { text: 'Консоль RCON' }), out,
         h('div', { class: 'row', style: 'margin-top:8px' }, input,
           h('button', { class: 'primary', text: 'Выполнить', onclick: () => { const c = input.value; input.value = ''; run(c); } }),
           h('button', { text: 'help', onclick: () => run('help') }),
           h('button', { text: 'listplayers', onclick: () => run('listplayers') })),
-        h('div', { class: 'row', style: 'margin-top:8px' }, broadcast, h('button', { text: 'Объявить', onclick: say })),
-        h('p', { class: 'muted small', text: 'Настройки RCON берутся из секции [RconPlugin] файла Game.ini (вкладка «Конфиги»). Команды пишутся в лог менеджера.' })));
+        h('div', { class: 'row', style: 'margin-top:8px' }, broadcast, h('button', { text: 'Объявить', onclick: say }))),
+      h('div', { class: 'panel rcon-players' }, h('div', { class: 'head' }, h('h2', { text: 'Игроки' }), h('span', { class: 'spacer' }),
+        h('button', { text: 'Обновить', onclick: e => act(e.target, () => loadPlayers(true)) })), playersBox));
+    replace(body, layout);
+    fillHeight(layout, 20, 360);
     loadPlayers();
     every(20000, loadPlayers);
   },
@@ -822,25 +842,28 @@ const TAB_VIEWS = {
       try { view = await api('GET', `/servers/${enc(ctx.id)}/config/${file}`); }
       catch (e) { replace(box, h('div', { class: 'notice bad', text: e.message })); return; }
       const text = h('textarea', { value: view.content, disabled: running, spellcheck: 'false', autocapitalize: 'off', autocomplete: 'off' });
+      const editor = iniEditor(text);
       replace(box,
         h('div', { class: 'row', style: 'margin-bottom:12px' },
-          ['ServerSettings', 'Game', 'Engine'].map(f => h('button', { class: f === file ? 'primary' : '', text: f + '.ini', onclick: () => { file = f; draw(); } }))),
-        h('p', { class: 'muted small mono', text: view.path }),
+          ['ServerSettings', 'Game', 'Engine'].map(f => h('button', { class: f === file ? 'primary' : '', text: f + '.ini', onclick: () => { file = f; draw(); } })),
+          h('span', { class: 'muted small mono', style: 'margin-left:8px', text: view.path })),
+        await versionsPanel(running),
         running ? h('div', { class: 'notice', text: 'Сервер работает: править можно только после остановки. Игра читает файлы при старте и переписывает при остановке - правка на ходу потерялась бы.' }) : null,
         !view.exists ? h('div', { class: 'notice', text: 'Файла ещё нет: игра создаст его при первом запуске. Можно написать его заранее.' }) : null,
         view.managed && view.managed.length ? h('div', { class: 'notice', text: 'Менеджер переписывает перед стартом: ' + view.managed.join(', ') + '.' }) : null,
-        h('p', { class: 'muted small', text: 'Основные настройки удобнее менять во вкладке «Настройки» - там они собраны в форму. Здесь - всё остальное.' }),
-        h('div', { class: 'panel' }, iniEditor(text), h('div', { class: 'row end', style: 'margin-top:10px' },
+        editor, h('div', { class: 'row end', style: 'margin-top:10px' },
+          h('span', { class: 'muted small', text: 'Основные настройки удобнее менять во вкладке «Настройки». Здесь - всё остальное.' }),
+          h('span', { class: 'spacer' }),
           h('button', { class: 'primary', text: 'Сохранить файл', disabled: running, onclick: e => act(e.target, async () => {
             await api('PUT', `/servers/${enc(ctx.id)}/config/${file}`, { content: text.value });
             toast('Сохранено'); draw();
-          }) }))),
-        await versionsPanel(running));
+          }) })));
+      fillHeight(editor, 70, 280);
     };
     const versionsPanel = async running => {
       let versions = [];
       try { versions = await api('GET', `/servers/${enc(ctx.id)}/config/${file}/versions`); } catch { versions = []; }
-      return h('div', { class: 'panel' }, h('h2', { text: 'Прошлые версии' }),
+      return h('details', { class: 'panel versions' }, h('summary', { text: `История версий (${versions.length})` }),
         table(['Сохранена', 'Причина', 'Размер', ''], versions.map(v => [fmtTime(v.created_at), v.reason, fmtBytes(v.size),
           h('button', { text: 'Вернуть', disabled: running, onclick: e => act(e.target, async () => {
             if (!await ask(`Вернуть ${file}.ini к версии от ${fmtTime(v.created_at)}? Текущее содержимое тоже сохранится как версия.`, { ok: 'Вернуть', danger: false })) return;
@@ -981,7 +1004,7 @@ const TAB_VIEWS = {
             field('Минимальный аптайм (чч:мм)', minUptime, 'Если сервер запущен недавно (вручную или после падения), плановый рестарт пропускается. 00:00 - не проверять.')),
           preview,
           h('p', { class: 'muted small' }, warnings
-            ? `Перед рестартом игроки получат предупреждения за ${s.warnings.steps.map(x => x.minutes).sort((a, b) => b - a).join(', ')} мин. - если кто-то онлайн. `
+            ? `Игроки получат предупреждения за ${s.warnings.steps.map(x => x.minutes).sort((a, b) => b - a).join(', ')} мин. до рестарта (если кто-то онлайн). Сам рестарт - ровно в указанное время, даже если на сервере никого нет. `
             : 'Предупреждения игрокам не настроены. ', h('a', { href: `#/server/${enc(s.id)}/settings`, text: 'Настроить' })),
           h('div', { class: 'row end' }, save)),
         h('div', { class: 'panel' }, advanced));
@@ -1118,7 +1141,8 @@ const TAB_VIEWS = {
         h('p', { class: 'muted small', text: 'Меняются только на остановленном сервере.' }),
         h('div', { class: 'form' },
           field('Карта', h('div', { class: 'row' }, mapSelect, mapPath)),
-          field('Игровой порт', portWithRaw(inputs.game_port), 'Игра занимает этот порт и следующий за ним (Raw UDP). Оба нужно открыть в файрволе.'),
+          field('Игровой порт', inputs.game_port),
+          field('Raw UDP-порт', rawPort(inputs.game_port), 'Игра всегда занимает следующий за игровым порт. Меняется вместе с игровым; открыть в файрволе нужно оба.'),
           field('Query-порт', inputs.query_port),
           field('Multihome (IP)', inputs.multihome, 'Пусто - слушать все адреса.'),
           field('Ветка Steam', inputs.branch),
@@ -1126,7 +1150,7 @@ const TAB_VIEWS = {
           field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 - как в игре. Пишется в Game.ini перед стартом; каждый бэкап копирует базу целиком.'))),
       gameBox,
       h('div', { class: 'panel' }, h('h2', { text: 'Предупреждения игрокам (RCON)' }),
-        h('p', { class: 'muted small', text: 'Перед плановым рестартом или остановкой, автообновлением и рестартом с галочкой «предупредить». Если на сервере никого нет - действие сразу, без ожидания. Нужен включённый RCON (раздел выше).' }),
+        h('p', { class: 'muted small', text: 'Плановый рестарт и остановка: предупреждения уходят за указанные минуты до назначенного времени, само действие - ровно в назначенное время. Ручной рестарт с галочкой «предупредить» и автообновление: отсчёт начинается сразу; если на сервере никого нет, действие выполняется без ожидания. Нужен включённый RCON (раздел выше).' }),
         h('div', { class: 'form' }, field('Предупреждать игроков', warnOn)), warnBody),
       h('div', { class: 'panel' }, h('h2', { text: 'Тексты для Discord' }),
         h('p', { class: 'muted small' }, 'Добавляются к стандартному уведомлению этого сервера. Пусто - только стандартный заголовок. Куда слать - на странице ', h('a', { href: '#/notifications', text: 'Уведомления' }), '.'),
@@ -1134,7 +1158,7 @@ const TAB_VIEWS = {
           field('Сервер готов', discord.ready), field('Сервер перезапущен', discord.restarted), field('Сервер остановлен', discord.stopped))),
       h('div', { class: 'panel' }, h('h2', { text: 'Скрипты (хуки)' }), hooksHelp(hooksInfo), datalist,
         hooksInfo.enabled ? h('div', { class: 'form' }, Object.entries(hookInputs).map(([ev, input]) => field(HOOK_LABELS[ev] || ev, input))) : null),
-      h('div', { class: 'row end', style: 'margin-bottom:16px' }, save),
+      h('div', { class: 'floating-save' }, save),
       h('h3', { text: 'Опасная зона' }),
       h('div', { class: 'panel' }, h('div', { class: 'row' },
         h('button', { text: 'Установить / проверить файлы', disabled: ctx.detail.lifecycle.state !== 'idle', onclick: e => act(e.target, async () => {
