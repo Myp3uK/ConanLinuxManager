@@ -268,3 +268,6 @@ body.locked > header.top, body.locked > main { display: none; }
 .log-level label { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-level select { flex: 1; min-width: 0; padding: 4px 8px; }
 @media (max-width: 510px) { .log-levels { grid-template-columns: 1fr; } }
+.check-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.check-row > input { flex: none; }
+.check-row > span { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }

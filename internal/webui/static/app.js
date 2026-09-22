@@ -1445,8 +1445,9 @@ const TAB_VIEWS = {
       const backups = h('input', { type: 'checkbox' });
       const confirmId = h('input', { placeholder: 'Введите ID сервера: ' + s.id });
       const ok = await ask(`Удалить сервер «${s.name}» из менеджера? Сервер должен быть остановлен.`, { ok: 'Удалить', extra: [
-        h('label', { class: 'row' }, files, 'удалить файлы игры и мир (' + s.install_dir + ')'),
-        h('label', { class: 'row' }, backups, 'удалить бэкапы менеджера'),
+        h('label', { class: 'check-row' }, files, h('span', {}, 'удалить файлы игры и мир',
+          h('span', { class: 'muted small mono', text: s.install_dir }))),
+        h('label', { class: 'check-row' }, backups, h('span', {}, 'удалить бэкапы менеджера')),
         confirmId] });
       if (!ok) return;
       if (confirmId.value.trim() !== s.id) { toast('ID не совпал - удаление отменено', 'bad'); return; }
