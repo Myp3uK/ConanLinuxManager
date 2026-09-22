@@ -44,6 +44,10 @@ func (c *Controller) Rcon(ctx context.Context, id, command string) (string, erro
 }
 
 func (c *Controller) rcon(ctx context.Context, cfg server.Config, command string) (string, error) {
+	return c.rconExec(ctx, cfg, command, false)
+}
+
+func (c *Controller) rconExec(ctx context.Context, cfg server.Config, command string, automatic bool) (string, error) {
 	if state := c.Lifecycle(cfg.ID).State; state != "running" {
 		return "", fmt.Errorf("server %q is %s, RCON needs it running", cfg.ID, state)
 	}
@@ -56,19 +60,20 @@ func (c *Controller) rcon(ctx context.Context, cfg server.Config, command string
 	}
 	ctx, cancel := context.WithTimeout(ctx, rconTimeout)
 	defer cancel()
-	client, err := rcon.Dial(ctx, settings.Address(), settings.Password)
-	if err != nil {
-		return "", err
-	}
-	defer client.Close()
-	return client.Exec(ctx, command)
+	return c.rconSession(cfg.ID).exec(ctx, settings, c.Snapshot(cfg.ID).PID, command, automatic)
 }
 
-// Players lists the players connected to a running server.
-func (c *Controller) Players(ctx context.Context, id string) ([]rcon.Player, error) {
-	out, err := c.Rcon(ctx, id, "listplayers")
+// Players lists the players connected to a running server. The list the
+// keep-alive fetched is used while it is fresh; fresh asks the game anyway.
+func (c *Controller) Players(ctx context.Context, id string, fresh bool) ([]rcon.Player, error) {
+	cfg, err := c.Repo.Get(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return rcon.ParsePlayers(out), nil
+	if !fresh && c.Lifecycle(id).State == "running" {
+		if players, at := c.rconSession(id).cached(); !at.IsZero() && time.Since(at) < playersFresh {
+			return players, nil
+		}
+	}
+	return c.refreshPlayers(ctx, cfg, false)
 }

@@ -41,6 +41,10 @@ type Controller struct {
 	Steam              Steam
 	Logger             *slog.Logger
 	jobs               map[string]Job
+	rconMu             sync.Mutex
+	rconSessions       map[string]*rconSession
+	statsMu            sync.Mutex
+	stats              map[string]*statsState
 	jobsMu             sync.RWMutex
 	lifecycleMu        sync.Mutex
 	closing            bool
@@ -147,7 +151,30 @@ func (c *Controller) Start(ctx context.Context, id string) error {
 		return err
 	}
 	c.resetCrashes(id)
+	c.updateBeforeStart(ctx, id)
 	return c.start(ctx, id)
+}
+
+// StartJob starts a server in the background. A start with auto_update
+// first asks Steam for a newer build and may download it, which takes longer
+// than a request may wait.
+func (c *Controller) StartJob(ctx context.Context, id string) (Job, error) {
+	if _, err := c.Repo.Get(ctx, id); err != nil {
+		return Job{}, err
+	}
+	now := time.Now().UTC()
+	job := Job{ID: fmt.Sprintf("start-%d", now.UnixNano()), ServerID: id, Kind: "start", Status: "running", CreatedAt: now, UpdatedAt: now}
+	c.setJob(job)
+	go func(job Job) {
+		err := c.Start(context.Background(), id)
+		job.UpdatedAt = time.Now().UTC()
+		job.Status = "completed"
+		if err != nil {
+			job.Status, job.Error = "failed", err.Error()
+		}
+		c.setJob(job)
+	}(job)
+	return job, nil
 }
 
 // restartStopTimeout bounds how long a restart waits for the world to be saved.

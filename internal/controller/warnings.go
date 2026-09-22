@@ -18,7 +18,8 @@ func (c *Controller) warnPlayers(ctx context.Context, cfg server.Config, action 
 		return nil
 	}
 	count := func() (int, error) {
-		players, err := c.Players(ctx, cfg.ID)
+		// Each mark asks the game: the cached list may be a minute old.
+		players, err := c.Players(ctx, cfg.ID, true)
 		return len(players), err
 	}
 	first := true
@@ -28,7 +29,8 @@ func (c *Controller) warnPlayers(ctx context.Context, cfg server.Config, action 
 		}
 		if first {
 			first = false
-			c.emit(events.PlayersWarned, cfg, "Players were warned before the "+action, map[string]string{"action": action, "message": text})
+			// The warning itself is what a Discord channel for players shows.
+			c.emit(events.PlayersWarned, cfg, "Players were warned before the "+action, map[string]string{"action": action, "announce": text})
 		}
 		return nil
 	}

@@ -31,7 +31,13 @@ type Health struct {
 func (c *Controller) observeAvailability(ctx context.Context, cfg server.Config) {
 	policy := c.AvailabilityPolicy
 	endpoint := net.JoinHostPort(c.QueryHost, strconv.Itoa(cfg.QueryPort))
-	a := watchdog.NewAvailability(endpoint, time.Now().UTC(), policy)
+	// The loading allowance counts from the process start: a server the
+	// manager adopted after its own restart has long finished loading.
+	started := time.Now().UTC()
+	if at := c.Snapshot(cfg.ID).StartedAt; !at.IsZero() && at.Before(started) {
+		started = at.UTC()
+	}
+	a := watchdog.NewAvailability(endpoint, started, policy)
 	publish := func() {
 		c.lifecycleMu.Lock()
 		h := c.health[cfg.ID]

@@ -84,6 +84,7 @@ func (c *Controller) Delete(ctx context.Context, id string, opts DeleteOptions) 
 	if err := c.Repo.Delete(ctx, id); err != nil {
 		return err
 	}
+	c.dropRcon(id)
 	if c.Units != nil {
 		if err := os.Remove(c.Units.SpecPath(id)); err != nil && !os.IsNotExist(err) {
 			c.Logger.Warn("remove unit specification", "server", id, "error", err)

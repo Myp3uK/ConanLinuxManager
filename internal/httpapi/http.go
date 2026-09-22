@@ -126,8 +126,8 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	mux.HandleFunc("GET /api/v1/events", a.events)
 	mux.HandleFunc("GET /api/v1/hooks", a.hookScripts)
 	mux.HandleFunc("/api/v1/notifications", a.notificationChannels)
-	mux.HandleFunc("GET /api/v1/notification-events", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, notify.Catalog())
+	mux.HandleFunc("GET /api/v1/notification-categories", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, notify.Categories())
 	})
 	mux.HandleFunc("/api/v1/notifications/", a.notificationChannel)
 	mux.HandleFunc("/api/v1/servers/", a.routeServer)
@@ -641,6 +641,8 @@ func (a *api) server(w http.ResponseWriter, r *http.Request) {
 			"process":   a.control.Snapshot(id),
 			"lifecycle": a.control.Lifecycle(id),
 			"health":    a.control.Health(id),
+			"stats":     a.control.Stats(id),
+			"rcon":      a.control.RconState(id),
 		})
 	case http.MethodPatch:
 		a.patchServer(w, r, id)
@@ -784,7 +786,7 @@ func (a *api) serverAction(w http.ResponseWriter, r *http.Request, id, action st
 		return
 	}
 	if action == "players" && r.Method == http.MethodGet {
-		players, err := a.control.Players(r.Context(), id)
+		players, err := a.control.Players(r.Context(), id, r.URL.Query().Get("fresh") == "1")
 		if err != nil {
 			a.fail(w, r, http.StatusConflict, err)
 			return
@@ -850,6 +852,17 @@ func (a *api) serverAction(w http.ResponseWriter, r *http.Request, id, action st
 	var err error
 	switch action {
 	case "start":
+		// With auto_update the start may first download a build, which
+		// outlasts a request; it runs as a job the client follows.
+		if cfg, getErr := a.repo.Get(r.Context(), id); getErr == nil && cfg.AutoUpdate {
+			job, jobErr := a.control.StartJob(r.Context(), id)
+			if jobErr != nil {
+				a.fail(w, r, http.StatusConflict, jobErr)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, job)
+			return
+		}
 		err = a.control.Start(r.Context(), id)
 	case "stop":
 		err = a.control.Stop(r.Context(), id)

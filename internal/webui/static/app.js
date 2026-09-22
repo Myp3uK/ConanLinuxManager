@@ -98,7 +98,7 @@ function ask(text, { ok = 'Да', danger = true, extra = [] } = {}) {
   });
 }
 
-const JOB_NAMES = { install: 'Установка', restart: 'Рестарт', update: 'Обновление', backup: 'Бэкап', restore: 'Восстановление' };
+const JOB_NAMES = { start: 'Запуск', install: 'Установка', restart: 'Рестарт', update: 'Обновление', backup: 'Бэкап', restore: 'Восстановление' };
 
 // runJob follows a background job to its end and reports how it went.
 async function runJob(job) {
@@ -146,6 +146,8 @@ const AVAILABILITY = {
 };
 function availabilityBadge(a) {
   if (!a || !a.state) return h('span', { class: 'muted', text: '-' });
+  // Before the first query the state is only a guess.
+  if (!isSet(a.checked_at)) return h('span', { class: 'badge', text: 'проверка…' });
   const [label, kind] = AVAILABILITY[a.state] || [a.state, ''];
   return h('span', { class: 'badge ' + kind, text: label });
 }
@@ -165,6 +167,16 @@ function table(headers, rows, empty = 'Пусто') {
     h('thead', {}, h('tr', {}, headers.map(x => h('th', { text: x })))),
     h('tbody', {}, rows.map(r => h('tr', {}, r.map(c => h('td', {}, c)))))));
 }
+// portWithRaw shows the Raw UDP port the game takes next to the game port.
+function portWithRaw(input) {
+  const raw = h('span', { class: 'muted small nowrap' });
+  const show = () => { const n = parseInt(input.value, 10); raw.textContent = n > 0 ? `Raw UDP: ${n + 1}` : ''; };
+  input.addEventListener('input', show);
+  show();
+  input.style.flex = '1';
+  return h('div', { class: 'row', style: 'flex-wrap:nowrap' }, input, raw);
+}
+
 function field(label, input, hint) {
   return [h('label', {}, label, hint ? helpIcon(hint) : null), input];
 }
@@ -263,7 +275,11 @@ function actionButtons(detail, refresh) {
   const steps = (detail.server.warnings && detail.server.warnings.steps) || [];
   const warnings = steps.length;
   const start = h('button', { class: 'primary', text: 'Запустить', disabled: state !== 'idle',
-    onclick: e => act(e.target, async () => { await api('POST', `/servers/${enc(id)}/start`); toast('Запуск отправлен'); refresh(); }) });
+    onclick: e => act(e.target, async () => {
+      const r = await api('POST', `/servers/${enc(id)}/start`);
+      if (r && r.kind === 'start') { refresh(); await runJob(r); } else toast('Запуск отправлен');
+      refresh();
+    }) });
   const stop = h('button', { text: 'Остановить', disabled: !running,
     onclick: e => act(e.target, async () => {
       if (!await ask(`Остановить «${detail.server.name}»? Игра сохранит мир; если не выйдет за 5 минут, процесс будет убит и база проверена.`, { ok: 'Остановить' })) return;
@@ -283,6 +299,76 @@ function actionButtons(detail, refresh) {
       await api('POST', `/servers/${enc(id)}/kill`); toast('Процесс убит'); refresh();
     }) });
   return h('div', { class: 'row' }, start, stop, restart, kill);
+}
+
+// ---------- server statistics ----------
+
+function fmtUptime(seconds) {
+  if (!seconds) return '-';
+  const d = Math.floor(seconds / 86400), h = Math.floor(seconds % 86400 / 3600), m = Math.floor(seconds % 3600 / 60);
+  return d ? `${d} д ${h} ч` : h ? `${h} ч ${m} мин` : `${m} мин`;
+}
+
+// sparkline draws a small line of values; the page's policy allows SVG built
+// through the DOM.
+function sparkline(values, max) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 24');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('class', 'spark');
+  if (values.length < 2) return svg;
+  const top = Math.max(max || 0, ...values) || 1;
+  const points = values.map((v, i) => `${(i / (values.length - 1) * 100).toFixed(2)},${(23 - v / top * 22).toFixed(2)}`).join(' ');
+  const line = document.createElementNS(ns, 'polyline');
+  line.setAttribute('points', points);
+  svg.append(line);
+  return svg;
+}
+
+function tile(label, value, sub, spark, hint) {
+  return h('div', { class: 'tile' },
+    h('div', { class: 'tile-label' }, label, hint ? helpIcon(hint) : null),
+    h('div', { class: 'tile-value', text: value }),
+    sub ? h('div', { class: 'tile-sub', text: sub }) : null,
+    spark || null);
+}
+
+function statsPanel(d) {
+  const st = d.stats || {}, g = st.game, p = st.process, host = st.host || {}, hist = st.history || [];
+  const running = d.lifecycle.state === 'running';
+  const tiles = [];
+  if (running && (g || p)) {
+    const online = d.rcon && d.rcon.players_at && isSet(d.rcon.players_at) ? d.rcon.players.length : g ? g.players : null;
+    tiles.push(tile('Онлайн', online === null ? '-' : String(online),
+      d.rcon && d.rcon.players_at && isSet(d.rcon.players_at) ? 'RCON, ' + fmtAgo(d.rcon.players_at) : 'по отчёту игры',
+      sparkline(hist.map(x => x.players))));
+    if (g) tiles.push(tile('FPS сервера', g.fps_avg.toFixed(1), `мин ${g.fps_min.toFixed(1)} · макс ${g.fps_max.toFixed(1)}`,
+      sparkline(hist.map(x => x.fps)), 'Средний, минимальный и максимальный FPS сервера за последнюю минуту, из отчёта игры. Ниже 15-20 игроки замечают лаги.'));
+    if (p) tiles.push(tile('CPU', p.cpu_known ? p.cpu_percent.toFixed(0) + '%' : '-', p.cpu_known ? `${(p.cpu_percent / (host.cpus || 1)).toFixed(1)}% от всех ${host.cpus || '?'} ядер` : 'первый замер через 30 с',
+      sparkline(hist.map(x => x.cpu)), '100% - одно ядро целиком. По данным Linux (/proc) за последние 30 секунд.'));
+    if (p) tiles.push(tile('Память', fmtBytes(p.rss_bytes), g && g.process_peak_bytes ? 'пик ' + fmtBytes(g.process_peak_bytes) : `${p.threads} потоков`,
+      sparkline(hist.map(x => x.rss)), 'Сколько оперативной памяти занимает процесс сервера (RSS). Пик - из отчёта игры.'));
+    if (g) tiles.push(tile('Аптайм', fmtUptime(g.uptime_seconds), g.npcs ? `NPC в мире: ${g.npcs}` : null, null));
+  }
+  if (host.mem_total_bytes) {
+    const used = host.mem_total_bytes - host.mem_available_bytes;
+    tiles.push(tile('Хост', `${fmtBytes(used)} / ${fmtBytes(host.mem_total_bytes)}`, `нагрузка ${host.load1.toFixed(2)} на ${host.cpus} ядер`, null,
+      'Память всей машины: занято / всего. Нагрузка - load average за минуту; больше числа ядер - процессору не хватает времени.'));
+  }
+  return h('div', { class: 'panel' },
+    h('h2', { text: 'Ресурсы' }),
+    tiles.length ? h('div', { class: 'tiles' }, tiles) : h('p', { class: 'muted', text: 'Нет данных.' }),
+    running ? h('p', { class: 'muted small', style: 'margin:10px 0 0' },
+      g ? `Отчёт игры от ${new Date(g.at).toLocaleTimeString('ru-RU')} (игра пишет его раз в минуту). ` : 'Отчёт игры появится через минуту после загрузки. ',
+      'Графики - последний час.') : h('p', { class: 'muted small', style: 'margin:10px 0 0', text: 'Сервер не запущен: показаны только данные хоста.' }));
+}
+
+function rconBadge(r) {
+  if (!r) return '-';
+  if (r.connected) return h('span', { class: 'badge ok', text: 'подключён' });
+  if (r.error) return h('span', { class: 'badge bad', title: r.error, text: 'ошибка' });
+  return h('span', { class: 'badge', text: 'не подключён' });
 }
 
 // ---------- views ----------
@@ -334,7 +420,7 @@ async function viewServers() {
         facts([
           ['Доступность', availabilityBadge(d.health && d.health.availability)],
           ['Игроки', playersText(s.id, state)],
-          ['Порты', `${s.game_port} / ${s.query_port}`],
+          ['Порты', `${s.game_port} (raw ${s.game_port + 1}) / ${s.query_port}`],
           state === 'running' && d.process && ['Работает', fmtAgo(d.process.started_at).replace(' назад', '')],
           d.health && d.health.recent_crashes > 0 && ['Падений', String(d.health.recent_crashes)],
           d.health && d.health.restart_pending && ['Перезапуск', fmtAgo(d.health.restart_at)],
@@ -433,7 +519,7 @@ async function viewNewServer() {
       field('Каталог установки', install, 'Может быть на отдельном диске.'),
       field('Каталог SteamCMD', steam, 'Общий для всех серверов.'),
       field('Ветка', branch),
-      field('Игровой порт', gamePort, 'Игра занимает этот порт и следующий за ним.'),
+      field('Игровой порт', portWithRaw(gamePort), 'Игра занимает этот порт и следующий за ним (Raw UDP). Оба нужно открыть в файрволе.'),
       field('Query-порт', queryPort),
       field('Аргументы запуска', args),
       field('Интервал бэкапов игры, с', backup, '0 - оставить как в игре. Каждый бэкап копирует базу целиком: чем реже, тем меньше износ SSD.'),
@@ -532,7 +618,7 @@ async function gameSettings(ctx, running, reload) {
     toast('Настройки игры сохранены'); reload();
   }) });
   return h('div', {}, h('h2', { text: 'Настройки игры' }),
-    running ? h('div', { class: 'notice', text: 'Сервер работает: игра читает эти файлы при старте и переписывает при остановке, поэтому менять их можно только на остановленном сервере.' })
+    running ? h('div', { class: 'notice', text: 'Сервер работает: Изменение настроек заблокирован, сначала выключите сервер.' })
       : h('p', { class: 'muted small', text: 'Хранятся в INI-файлах игры (вкладка «Конфиги»), вступают в силу при следующем запуске.' }),
     h('div', { class: 'form' }, rows),
     h('div', { class: 'row end', style: 'margin-top:8px' }, save));
@@ -593,8 +679,9 @@ const TAB_VIEWS = {
   async overview(body, ctx) {
     const info = h('div', { class: 'panel' });
     const recovery = h('div');
+    const resources = h('div');
     const update = h('div', { class: 'panel' });
-    replace(body, recovery, info, update);
+    replace(body, recovery, resources, info, update);
     const draw = d => {
       const s = d.server, p = d.process || {}, hl = d.health || {}, a = hl.availability || {};
       replace(recovery, s.recovery_reason ? h('div', { class: 'notice bad' },
@@ -604,16 +691,18 @@ const TAB_VIEWS = {
             await api('POST', `/servers/${enc(s.id)}/verify`); toast('База цела, блокировка снята'); ctx.refresh();
           }) }),
           h('a', { href: `#/server/${enc(s.id)}/backups`, text: 'Восстановить из бэкапа' }))) : null);
+      replace(resources, statsPanel(d));
       replace(info, h('h2', { text: 'Состояние' }), facts([
         ['Состояние', stateBadge(d.lifecycle.state)],
         d.lifecycle.error && ['Ошибка', d.lifecycle.error],
         ['Процесс', p.pid ? `PID ${p.pid}, запущен ${fmtTime(p.started_at)}` : '-'],
         ['Доступность', h('span', {}, availabilityBadge(a), a.checked_at && isSet(a.checked_at) ? h('span', { class: 'muted small', text: '  проверено ' + fmtAgo(a.checked_at) }) : null)],
         a.last_error && ['Ошибка query', a.last_error],
+        d.lifecycle.state === 'running' && ['RCON', h('span', {}, rconBadge(d.rcon), d.rcon && d.rcon.error ? h('span', { class: 'muted small', text: '  ' + d.rcon.error }) : null)],
         hl.recent_crashes > 0 && ['Падения', `${hl.recent_crashes} за 30 мин` + (hl.last_exit ? `, последнее ${fmtTime(hl.last_exit.at)} (${hl.last_exit.signal ? 'сигнал ' + hl.last_exit.signal : 'код ' + hl.last_exit.code})` : '')],
         hl.restart_pending && ['Автоперезапуск', fmtAgo(hl.restart_at)],
         hl.reason && ['Watchdog', hl.reason],
-        ['Порты', `игра ${s.game_port} (+1), query ${s.query_port}`],
+        ['Порты', `игра ${s.game_port}, raw ${s.game_port + 1}, query ${s.query_port}`],
         ['Каталог', h('span', { class: 'mono', text: s.install_dir })],
         ['Ветка', s.branch],
         ['Перезапуск при падении', s.restart_on_crash ? 'да' : 'нет'],
@@ -671,17 +760,19 @@ const TAB_VIEWS = {
     };
     const say = () => { const text = broadcast.value.trim(); if (text) { broadcast.value = ''; run('broadcast ' + text); } };
     broadcast.onkeydown = e => { if (e.key === 'Enter') say(); };
-    const loadPlayers = async () => {
+    const loadPlayers = async fresh => {
       if (ctx.detail.lifecycle.state !== 'running') { replace(playersBox, h('p', { class: 'muted', text: 'Сервер не запущен.' })); return; }
       try {
-        const r = await api('GET', `/servers/${enc(ctx.id)}/players`);
+        const r = await api('GET', `/servers/${enc(ctx.id)}/players` + (fresh ? '?fresh=1' : ''));
         const columns = r.players.length ? Object.keys(r.players[0]) : [];
-        replace(playersBox, h('p', { text: `Онлайн: ${r.count}` }), table(columns, r.players.map(p => columns.map(c => p[c] || ''))  , 'Никого нет'));
+        const rc = ctx.detail.rcon || {};
+        replace(playersBox, h('p', {}, `Онлайн: ${r.count} `, fresh ? '' : rc.players_at && isSet(rc.players_at) ? h('span', { class: 'muted small', text: `(список обновляется раз в минуту, последний раз ${fmtAgo(rc.players_at)})` }) : ''),
+          table(columns, r.players.map(p => columns.map(c => p[c] || '')), 'Никого нет'));
       } catch (e) { replace(playersBox, h('div', { class: 'notice', text: e.message })); }
     };
     replace(body,
       h('div', { class: 'panel' }, h('div', { class: 'head' }, h('h2', { text: 'Игроки' }), h('span', { class: 'spacer' }),
-        h('button', { text: 'Обновить', onclick: e => act(e.target, loadPlayers) })), playersBox),
+        h('button', { text: 'Обновить', onclick: e => act(e.target, () => loadPlayers(true)) })), playersBox),
       h('div', { class: 'panel' }, h('h2', { text: 'Консоль RCON' }), out,
         h('div', { class: 'row', style: 'margin-top:8px' }, input,
           h('button', { class: 'primary', text: 'Выполнить', onclick: () => { const c = input.value; input.value = ''; run(c); } }),
@@ -1015,19 +1106,19 @@ const TAB_VIEWS = {
     const gameBox = h('div', { class: 'panel' }, h('p', { class: 'muted', text: 'Загрузка настроек игры…' }));
     replace(body,
       h('div', { class: 'panel' }, h('h2', { text: 'Менеджер' }),
-        h('p', { class: 'muted small', text: 'Эти настройки меняются на работающем сервере.' }),
+        h('p', { class: 'muted small', text: 'Настройки менеджера' }),
         h('div', { class: 'form' },
           field('Название в менеджере', inputs.name),
           field('Перезапускать при падении', inputs.restart_on_crash, 'До 3 раз за 30 минут, затем сервер остаётся выключенным и приходит уведомление.'),
-          field('Проверка на зомби', h('div', { class: 'row' }, zombieOn, zombieMinutes, h('span', { class: 'muted', text: 'мин. без ответа' })),
+          field('Проверка на зомби', h('div', { class: 'row' }, zombieOn, zombieMinutes, h('span', { class: 'muted', text: 'мин' })),
             'Если процесс жив, но не отвечает на запросы Steam столько минут после загрузки - сервер останавливается (с проверкой базы) и запускается снова.'),
-          field('Автообновление', inputs.auto_update, 'Новая сборка ставится сразу после выхода, с предупреждением игроков и бэкапом.'),
+          field('Автообновление', inputs.auto_update, 'Проверка обновлений игры при запуске сервера (вручную или по расписанию) и каждые 30 минут во время работы. Если в Steam новая сборка: при запуске она ставится до старта, на работающем сервере - с предупреждением игроков, бэкапом и рестартом.\nПосле падения и после перезагрузки хоста сервер поднимается без проверки, чтобы не ждать Steam.\nМоды пока не обновляются - они будут отдельным этапом.'),
           field('Бэкап при остановке', inputs.backup_on_stop, 'Копия мира в бэкапы менеджера после каждой нормальной остановки.'))),
       h('div', { class: 'panel' }, h('h2', { text: 'Запуск' }),
         h('p', { class: 'muted small', text: 'Меняются только на остановленном сервере.' }),
         h('div', { class: 'form' },
           field('Карта', h('div', { class: 'row' }, mapSelect, mapPath)),
-          field('Игровой порт', inputs.game_port, 'Игра занимает этот порт и следующий (Raw UDP).'),
+          field('Игровой порт', portWithRaw(inputs.game_port), 'Игра занимает этот порт и следующий за ним (Raw UDP). Оба нужно открыть в файрволе.'),
           field('Query-порт', inputs.query_port),
           field('Multihome (IP)', inputs.multihome, 'Пусто - слушать все адреса.'),
           field('Ветка Steam', inputs.branch),
@@ -1076,31 +1167,24 @@ const TAB_VIEWS = {
 
 // ---------- notifications ----------
 
-// Ready-made event sets for a channel; the form ticks the matching events.
-const EVENT_PRESETS = [
-  ['problems', 'Только проблемы', 'Падения, зависания, повреждённая база, ошибки обновлений и бэкапов.', e => e.severity === 'error'],
-  ['important', 'Проблемы и предупреждения', 'Плюс перезапуски после падения, недоступность, найденное обновление.', e => e.severity !== 'info'],
-  ['players', 'Для игроков', 'Сервер готов, перезапущен, остановлен, обновление установлено - без технических подробностей.',
-    e => ['server.ready', 'server.restarted', 'server.stopped', 'update.finished', 'backup.restored'].includes(e.type)],
-  ['all', 'Всё', 'Каждое событие, включая бэкапы и изменения настроек.', () => true],
-];
-
-// channelEvents is what a stored channel actually receives: channels from
-// before the event list keep a level and no list.
-function channelEvents(c, catalog) {
-  const rank = { info: 0, warning: 1, error: 2 };
-  const min = rank[c.min_severity] || 0;
-  const listed = c.event_types && c.event_types.length ? new Set(c.event_types) : null;
-  return catalog.filter(e => rank[e.severity] >= min && (listed ? listed.has(e.type) : e.type !== 'server.started')).map(e => e.type);
+// channelCategories tells which categories a stored channel takes. Channels
+// from before the categories have a level and no event list.
+function channelCategories(c, cats) {
+  if (!c.event_types || !c.event_types.length) {
+    const byLevel = { error: ['crash', 'attention'], warning: ['crash', 'attention', 'technical'] };
+    return byLevel[c.min_severity] || cats.map(x => x.key);
+  }
+  return cats.filter(x => x.types.some(t => c.event_types.includes(t))).map(x => x.key);
 }
+
+const AUDIENCES = [['players', 'Для игроков', 'Можно направить в общий канал сервера.'], ['admins', 'Для админов', 'Технические сообщения; упоминание роли ставится только к ним.']];
 
 async function viewNotifications() {
   const listBox = h('div');
   const formBox = h('div');
-  let servers = [], catalog = [];
-  try { [servers, catalog] = await Promise.all([api('GET', '/servers'), api('GET', '/notification-events')]); } catch (e) { toast(e.message, 'bad'); }
+  let servers = [], cats = [];
+  try { [servers, cats] = await Promise.all([api('GET', '/servers'), api('GET', '/notification-categories')]); } catch (e) { toast(e.message, 'bad'); }
   const serverName = id => (servers.find(s => s.id === id) || {}).name || id;
-  const titleOf = type => (catalog.find(e => e.type === type) || {}).title || type;
 
   const draw = async () => {
     let channels = [];
@@ -1110,17 +1194,16 @@ async function viewNotifications() {
       return;
     }
     replace(listBox, h('div', { class: 'grid' }, channels.map(c => {
-      const types = channelEvents(c, catalog);
-      const preset = EVENT_PRESETS.find(([, , , fn]) => { const want = catalog.filter(fn).map(e => e.type); return want.length === types.length && want.every(t => types.includes(t)); });
+      const keys = channelCategories(c, cats);
       return h('div', { class: 'card' },
         h('div', { class: 'title' }, h('strong', { text: c.name }), h('span', { class: 'spacer' }),
           c.enabled ? h('span', { class: 'badge ok', text: 'включён' }) : h('span', { class: 'badge', text: 'выключен' })),
         facts([
           ['Серверы', c.server_id ? serverName(c.server_id) : 'все'],
-          ['Присылает', h('span', { title: types.map(titleOf).join('\n') }, preset ? preset[1] : `${types.length} событий`, ' ', h('span', { class: 'help', text: '?' }))],
+          ['Присылает', cats.filter(x => keys.includes(x.key)).map(x => x.title).join(', ') || '-'],
           ['Упоминание', c.mention ? h('span', { class: 'mono', text: c.mention }) : 'нет'],
           ['Вебхук', h('span', { class: 'mono small', text: c.webhook })],
-          ['Последняя отправка', c.last_error ? h('span', { class: 'small', style: 'color:var(--bad)', text: c.last_error }) : c.last_sent_at ? fmtAgo(c.last_sent_at) + ' назад' : 'ещё не было'],
+          ['Последняя отправка', c.last_error ? h('span', { class: 'small', style: 'color:var(--bad)', text: c.last_error }) : c.last_sent_at ? fmtAgo(c.last_sent_at) : 'ещё не было'],
         ]),
         h('div', { class: 'row' },
           h('button', { text: 'Отправить тест', onclick: e => act(e.target, async () => { await api('POST', `/notifications/${enc(c.id)}/test`); toast('Тестовое сообщение отправлено - проверьте канал в Discord'); draw(); }) }),
@@ -1142,52 +1225,33 @@ async function viewNotifications() {
     const mention = h('input', { class: 'mono', value: c.mention || '', placeholder: '<@&123456789012345678>' });
     const enabled = h('input', { type: 'checkbox', checked: c.enabled });
 
-    // Event checklist with presets above it.
+    const selected = channel ? channelCategories(c, cats) : ['start', 'restart', 'update', 'technical'];
     const boxes = {};
-    const selected = new Set(channel ? channelEvents(c, catalog) : catalog.filter(EVENT_PRESETS[1][3]).map(e => e.type));
-    const presetButtons = EVENT_PRESETS.map(([key, label, hint, fn]) => h('button', { text: label, title: hint, 'data-preset': key, onclick: () => {
-      for (const e of catalog) boxes[e.type].checked = fn(e);
-      markPreset();
-    } }));
-    const markPreset = () => {
-      const on = catalog.filter(e => boxes[e.type].checked).map(e => e.type);
-      for (const b of presetButtons) {
-        const fn = EVENT_PRESETS.find(p => p[0] === b.dataset.preset)[3];
-        const want = catalog.filter(fn).map(e => e.type);
-        b.className = want.length === on.length && want.every(t => on.includes(t)) ? 'primary' : '';
-      }
-    };
-    const groups = [];
-    for (const e of catalog) {
-      let g = groups.find(x => x.name === e.group);
-      if (!g) groups.push(g = { name: e.group, items: [] });
-      const box = boxes[e.type] = h('input', { type: 'checkbox', checked: selected.has(e.type), onchange: markPreset });
-      g.items.push(h('label', { class: 'row event-item' }, box, h('span', { text: e.title }),
-        e.severity === 'error' ? h('span', { class: 'badge bad plain', text: 'ошибка' }) : e.severity === 'warning' ? h('span', { class: 'badge warn plain', text: 'внимание' }) : null));
-    }
-    const eventsBox = h('div', { class: 'event-groups' }, groups.map(g => h('div', { class: 'event-group' },
-      h('h3', { text: g.name }), g.items)));
-    markPreset();
+    const columns = AUDIENCES.map(([audience, title, note]) => h('div', { class: 'category-group' },
+      h('h3', {}, title, ' ', helpIcon(note)),
+      cats.filter(x => x.audience === audience).map(x => {
+        boxes[x.key] = h('input', { type: 'checkbox', checked: selected.includes(x.key) });
+        return h('label', { class: 'row event-item' }, boxes[x.key], h('span', { text: x.title }), helpIcon(x.help));
+      })));
 
     replace(formBox, h('div', { class: 'panel' }, h('h2', { text: channel ? `Канал «${c.name}»` : 'Новый канал Discord' }),
       h('h3', { text: '1. Куда писать' }),
       h('div', { class: 'form' },
         field('Webhook URL', url, 'В Discord: настройки канала → Интеграции → Вебхуки → Новый вебхук → «Копировать URL веб-хука».\nАдрес хранится зашифрованным и дальше показывается замаскированным.'),
         field('Название', name, 'Для себя: чтобы отличать каналы в этом списке.'),
-        field('Серверы', server, 'От каких серверов присылать события.')),
+        field('Серверы', server, 'От каких серверов присылать сообщения.')),
       h('h3', { text: '2. Что присылать' }),
-      h('div', { class: 'row', style: 'margin-bottom:12px' }, presetButtons),
-      eventsBox,
+      h('div', { class: 'category-groups' }, columns),
       h('h3', { text: '3. Оформление' }),
       h('div', { class: 'form' },
-        field('Упоминание при ошибке', mention, 'Кого позвать, когда случилась ошибка (падение, повреждённая база...). К остальным событиям упоминание не ставится.\nРоль: <@&ID роли>, человек: <@ID>, или @here.\nID роли: Discord → Настройки сервера → Роли → ПКМ по роли → «Копировать ID» (нужен режим разработчика).'),
+        field('Упоминание при падении', mention, 'Кого позвать, когда сервер упал или нужно вмешательство. К сообщениям для игроков упоминание не ставится.\nРоль: <@&ID роли>, человек: <@ID>, или @here.\nID роли: Discord → Настройки сервера → Роли → ПКМ по роли → «Копировать ID» (нужен режим разработчика).'),
         field('Язык сообщений', language),
         field('Включён', enabled)),
       h('div', { class: 'row end', style: 'margin-top:14px' },
         h('button', { class: 'ghost', text: 'Отмена', onclick: () => replace(formBox) }),
         h('button', { class: 'primary', text: channel ? 'Сохранить' : 'Добавить канал', onclick: e => act(e.target, async () => {
-          const types = catalog.filter(x => boxes[x.type].checked).map(x => x.type);
-          if (!types.length) throw new Error('Выберите хотя бы одно событие');
+          const types = [...new Set(cats.filter(x => boxes[x.key].checked).flatMap(x => x.types))];
+          if (!types.length) throw new Error('Выберите хотя бы одно сообщение');
           const body = { name: name.value.trim(), server_id: server.value, min_severity: 'info', event_types: types,
             language: language.value, mention: mention.value.trim(), enabled: enabled.checked };
           if (url.value.trim()) body.webhook_url = url.value.trim();
@@ -1204,7 +1268,7 @@ async function viewNotifications() {
   replace(app,
     h('div', { class: 'head' }, h('h1', { text: 'Уведомления' }),
       h('button', { class: 'primary', text: '+ Добавить канал', onclick: () => showForm(null) })),
-    h('p', { class: 'muted small' }, 'Менеджер пишет в Discord через вебхуки: один вебхук - один канал. Можно завести несколько: например, «Проблемы» для админов с упоминанием роли и «Для игроков» в общий канал. Свои тексты «Сервер готов / перезапущен / остановлен» задаются у каждого сервера во вкладке «Настройки». Если хост не видит Discord, укажите прокси на странице ', h('a', { href: '#/panel', text: 'Панель' }), '.'),
+    h('p', { class: 'muted small' }, 'Менеджер пишет в Discord через вебхуки: один вебхук - один канал. Обычно заводят два: для игроков (запуски, рестарты, обновления) и для админов (падения) с упоминанием роли. Свои тексты «Сервер готов / перезапущен / остановлен» задаются у каждого сервера во вкладке «Настройки». Если хост не видит Discord, укажите прокси на странице ', h('a', { href: '#/panel', text: 'Панель' }), '.'),
     formBox, listBox);
   await draw();
 }

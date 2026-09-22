@@ -184,6 +184,53 @@ func (c *Controller) runUpdate(ctx context.Context, cfg server.Config, opts Upda
 	return "", updateErr
 }
 
+// updateBeforeStart installs a newer build before an operator's or the
+// schedule's start of a server with auto_update. A crash restart and the
+// start after a host reboot skip it: they should bring the server back fast.
+// Any failure leaves the installed build, and the server starts on it.
+func (c *Controller) updateBeforeStart(ctx context.Context, id string) {
+	cfg, err := c.Repo.Get(ctx, id)
+	if err != nil || !cfg.AutoUpdate || c.Lifecycle(id).State != "idle" {
+		return
+	}
+	// An update already running starts the server itself when it is done.
+	if !c.beginUpdate(id) {
+		return
+	}
+	defer c.endUpdate(id)
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	status, err := c.CheckUpdate(checkCtx, id)
+	cancel()
+	if err != nil || status.Error != "" {
+		c.Logger.Warn("update check before start failed; starting the installed build", "server", id, "error", err, "detail", status.Error)
+		return
+	}
+	if !status.Available {
+		return
+	}
+	env := map[string]string{"CONAN_BUILD_FROM": status.Installed, "CONAN_BUILD_TO": status.Latest}
+	if err := c.runHooks(ctx, hooks.Gate, "pre_update", cfg, env); err != nil {
+		c.emit(events.UpdateFailed, cfg, "A pre_update hook refused the update", map[string]string{"error": err.Error()})
+		return
+	}
+	c.emit(events.UpdateStarted, cfg, "Updating server files before the start", map[string]string{"from": status.Installed, "to": status.Latest})
+	if _, err := os.Stat(ramstate.LayoutFor(cfg).GameDatabase); err == nil {
+		if _, err := c.takeBackup(ctx, cfg, ReasonPreUpdate); err != nil {
+			c.emit(events.UpdateFailed, cfg, "Could not back up the world before the update", map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	if err := c.installFiles(ctx, cfg, false); err != nil {
+		installed, _ := steamcmd.InstalledBuild(cfg.InstallDir)
+		c.emit(events.UpdateFailed, cfg, "Update failed", map[string]string{"error": err.Error(), "build": installed})
+		return
+	}
+	installed, _ := steamcmd.InstalledBuild(cfg.InstallDir)
+	c.emit(events.UpdateFinished, cfg, "Server files updated", map[string]string{"from": status.Installed, "to": installed})
+	env["CONAN_BUILD_TO"] = installed
+	_ = c.runHooks(ctx, hooks.Async, "post_update", cfg, env)
+}
+
 // installFiles runs SteamCMD under the install reservation, which keeps any
 // start, and any other install into the same directories, out meanwhile.
 func (c *Controller) installFiles(ctx context.Context, cfg server.Config, validate bool) error {

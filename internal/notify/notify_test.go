@@ -255,18 +255,21 @@ func TestServerTextIsTheMessage(t *testing.T) {
 	}
 }
 
-// Every event with a title must be selectable in the channel form.
-func TestCatalogCoversTitledEvents(t *testing.T) {
-	listed := map[string]bool{}
-	for _, e := range Catalog() {
-		if e.Title == "" {
-			t.Errorf("%s: no title", e.Type)
+// Every category names events the formatter has a title for.
+func TestCategoriesUseTitledEvents(t *testing.T) {
+	seen := map[string]bool{}
+	for _, c := range Categories() {
+		if c.Title == "" || len(c.Types) == 0 || (c.Audience != "players" && c.Audience != "admins") {
+			t.Errorf("%s: incomplete category %+v", c.Key, c)
 		}
-		listed[e.Type] = true
-	}
-	for typ := range titles {
-		if !listed[string(typ)] {
-			t.Errorf("%s: missing from the catalog", typ)
+		for _, typ := range c.Types {
+			if _, ok := titles[events.Type(typ)]; !ok {
+				t.Errorf("%s: %s has no title", c.Key, typ)
+			}
+			if seen[typ] {
+				t.Errorf("%s: %s is in two categories", c.Key, typ)
+			}
+			seen[typ] = true
 		}
 	}
 }

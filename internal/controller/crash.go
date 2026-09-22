@@ -29,6 +29,7 @@ func (c *Controller) afterExit(cfg server.Config, crashed bool, exit *process.Ex
 	if fresh, err := c.Repo.Get(context.Background(), cfg.ID); err == nil {
 		cfg = fresh
 	}
+	c.dropRcon(cfg.ID)
 	details := map[string]string{}
 	if exit != nil {
 		details["exit"] = exit.String()
@@ -104,6 +105,9 @@ func (c *Controller) handleCrash(cfg server.Config, exit *process.Exit, details 
 	c.lifecycleMu.Unlock()
 
 	details["attempt"] = fmt.Sprintf("%d/%d", attempt, limit)
+	if excerpt := crashExcerpt(cfg); excerpt != "" {
+		details["log"] = excerpt
+	}
 	c.emit(events.ServerCrashed, cfg, "Server exited without being asked to", details)
 	crashEnv := exitEnv(exit)
 	crashEnv["CONAN_CRASH_ATTEMPT"] = fmt.Sprintf("%d", attempt)
@@ -117,12 +121,13 @@ func (c *Controller) handleCrash(cfg server.Config, exit *process.Exit, details 
 		if cfg.RestartOnCrash {
 			message = fmt.Sprintf("Server crashed %d times within %s; it will not be restarted automatically", attempt, window)
 		}
-		c.emit(events.ServerRestartAbandoned, cfg, message, details)
 		// Nobody wants this server running right now, so a reboot must not
-		// bring it back either until an operator starts it.
+		// bring it back either until an operator starts it. This is recorded
+		// before the event, so whoever reacts to it sees the final state.
 		if err := c.Repo.SetDesiredState(context.Background(), cfg.ID, "stopped"); err != nil {
 			c.Logger.Error("record desired state after crash", "server", cfg.ID, "error", err)
 		}
+		c.emit(events.ServerRestartAbandoned, cfg, message, details)
 		return
 	}
 	c.emit(events.ServerRestarting, cfg, fmt.Sprintf("Restarting in %s", wait), details)

@@ -28,6 +28,8 @@ func runRcon(args []string, stdout, stderr io.Writer) int {
 	password := flags.String("P", "", "RCON password (or CONAN_RCON_PASSWORD)")
 	query := flags.String("q", "", "command to run")
 	timeout := flags.Duration("t", 10*time.Second, "timeout")
+	// Conan refuses a right password now and then, so a login is retried.
+	attempts := flags.Int("r", rcon.DefaultAttempts, "login attempts")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -44,7 +46,7 @@ func runRcon(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	client, err := rcon.Dial(ctx, net.JoinHostPort(*address, strconv.Itoa(*port)), *password)
+	client, err := rcon.DialRetry(ctx, net.JoinHostPort(*address, strconv.Itoa(*port)), *password, *attempts, rcon.DefaultRetryDelay)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1

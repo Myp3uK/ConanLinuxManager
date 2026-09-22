@@ -145,3 +145,42 @@ func TestUpToDateServerIsNotTouched(t *testing.T) {
 		t.Fatal("an up-to-date server was updated")
 	}
 }
+
+func TestStartWithAutoUpdateInstallsANewerBuildFirst(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fail    error
+		started events.Type
+		build   string
+	}{
+		{"newer build", nil, events.UpdateFinished, "200"},
+		{"steam fails", errors.New("steam is down"), events.UpdateFailed, "100"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := testController(t)
+			c.Events = events.NewBus()
+			steam := &fakeSteam{latest: "200", fail: tc.fail}
+			c.Steam = steam
+			game := fakeGame(t, "#!/bin/sh\nexec sleep 60\n")
+			writeManifest(t, game, "100")
+			createServer(t, c, "a", game, true)
+			ctx := context.Background()
+			cfg, _ := c.Repo.Get(ctx, "a")
+			cfg.AutoUpdate = true
+			if err := c.Repo.Update(ctx, cfg); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Start(ctx, "a"); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Stop(ctx, "a"); _ = c.Processes.Wait(ctx, "a") })
+			if c.Lifecycle("a").State != "running" || steam.updates != 1 || countEvents(c.Events, "a", tc.started) != 1 {
+				t.Fatalf("state %+v, updates %d, events %+v", c.Lifecycle("a"), steam.updates, c.Events.Recent(0))
+			}
+			c.latest.entries = nil
+			if status, _ := c.CheckUpdate(ctx, "a"); status.Installed != tc.build {
+				t.Fatalf("installed %s, want %s", status.Installed, tc.build)
+			}
+		})
+	}
+}
