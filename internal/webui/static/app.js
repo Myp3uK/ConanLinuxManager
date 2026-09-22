@@ -726,7 +726,7 @@ async function viewNewServer() {
       field('Перезапускать при падении', restart),
       field('Сразу установить файлы', installNow, 'SteamCMD скачает сервер (~30 ГБ).'),
     ), h('div', { class: 'row end' }, create)));
-  id.focus();
+  name.focus();
 }
 
 // ---------- server settings helpers ----------
