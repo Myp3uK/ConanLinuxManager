@@ -18,6 +18,7 @@ import (
 	"github.com/example/conan-manager/internal/controller"
 	"github.com/example/conan-manager/internal/eventlog"
 	"github.com/example/conan-manager/internal/events"
+	"github.com/example/conan-manager/internal/gameconfig"
 	"github.com/example/conan-manager/internal/hooks"
 	"github.com/example/conan-manager/internal/launchservice"
 	"github.com/example/conan-manager/internal/notify"
@@ -137,6 +138,17 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	mux.HandleFunc("/api/v1/notifications", a.notificationChannels)
 	mux.HandleFunc("GET /api/v1/message-kinds", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, server.MessageKinds)
+	})
+	mux.HandleFunc("GET /api/v1/game-log-categories", func(w http.ResponseWriter, r *http.Request) {
+		type category struct {
+			Name  string `json:"name"`
+			Level string `json:"level"`
+		}
+		list := make([]category, 0, len(gameconfig.LogCategories))
+		for _, c := range gameconfig.LogCategories {
+			list = append(list, category{c[0], c[1]})
+		}
+		writeJSON(w, http.StatusOK, list)
 	})
 	mux.HandleFunc("GET /api/v1/notification-categories", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, notify.Categories())

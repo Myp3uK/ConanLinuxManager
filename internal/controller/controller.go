@@ -306,6 +306,20 @@ func (c *Controller) executeSchedule(ctx context.Context, item scheduler.Schedul
 	return err
 }
 
+// seedConfig writes the game's INI files a server does not have yet: the
+// game writes them only at its first stop, so without a seed the settings
+// tab has nothing to show and the log levels apply only from the second
+// start.
+func (c *Controller) seedConfig(cfg server.Config) {
+	written, err := gameconfig.Seed(cfg)
+	if err != nil {
+		c.Logger.Warn("seed game configuration", "server", cfg.ID, "error", err)
+	}
+	if len(written) > 0 {
+		c.Logger.Info("wrote initial game configuration", "server", cfg.ID, "files", strings.Join(written, ", "))
+	}
+}
+
 // ErrNotInstalled refuses a start when the game's executable is not there.
 var ErrNotInstalled = errors.New("the game is not installed")
 
@@ -334,6 +348,7 @@ func (c *Controller) start(ctx context.Context, id string) error {
 	if reason, err := watch.Check(); err != nil || reason != "" {
 		return fmt.Errorf("log preflight: %s (%v)", reason, err)
 	}
+	c.seedConfig(cfg)
 	// The game reads its INI files once at startup and rewrites them at
 	// shutdown, so this is the only point at which a managed setting sticks.
 	if settings := gameconfig.SettingsFor(cfg); settings.Managed() {
@@ -683,6 +698,7 @@ func (c *Controller) Install(ctx context.Context, id string) (Job, error) {
 		c.jobs[job.ID] = job
 		c.jobsMu.Unlock()
 		c.emit(events.InstallStarted, cfg, "Installing server files", nil)
+		c.seedConfig(cfg)
 		out := openSteamLog(cfg, "install")
 		err := c.Steam.InstallServer(context.Background(), cfg, out)
 		_ = out.Close()

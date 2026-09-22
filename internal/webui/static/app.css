@@ -263,3 +263,5 @@ body.locked > header.top, body.locked > main { display: none; }
 .audit-filters label.inline { flex-direction: row; align-items: center; gap: 8px; color: var(--text); padding-bottom: 7px; }
 .audit-details { max-width: 420px; overflow-wrap: anywhere; }
 .nowrap { white-space: nowrap; }
+.log-levels label { font-size: 13px; }
+.log-levels .setting-row > select { flex: 1; min-width: 0; }

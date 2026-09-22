@@ -749,13 +749,23 @@ const GAME_FIELDS = [
   { file: 'Game', section: 'RconPlugin', key: 'RconMaxKarma', label: 'Karma', type: 'number', def: '60', hint: 'Сколько неверных паролей подряд терпит сервер, прежде чем заблокировать адрес.' },
 ];
 
-async function gameSettings(ctx, running, reload) {
-  const views = {};
-  try {
-    for (const file of new Set(GAME_FIELDS.filter(f => f.file).map(f => f.file))) {
-      views[file] = await api('GET', `/servers/${enc(ctx.id)}/config/${file}`);
-    }
-  } catch (e) { return h('div', { class: 'notice bad', text: 'Не удалось прочитать настройки игры: ' + e.message }); }
+// cached answers requests whose answer does not change while the page is
+// open, such as the hook scripts and the message kinds.
+const apiCache = new Map();
+function cached(path) {
+  if (!apiCache.has(path)) apiCache.set(path, api('GET', path).catch(e => { apiCache.delete(path); throw e; }));
+  return apiCache.get(path);
+}
+
+// loadGameViews reads the three INI files at once.
+async function loadGameViews(ctx) {
+  const files = ['ServerSettings', 'Game', 'Engine'];
+  const list = await Promise.all(files.map(file => api('GET', `/servers/${enc(ctx.id)}/config/${file}`)));
+  return Object.fromEntries(files.map((file, i) => [file, list[i]]));
+}
+
+function gameSettings(ctx, running, reload, views) {
+  if (views instanceof Error) return h('div', { class: 'notice bad', text: 'Не удалось прочитать настройки игры: ' + views.message });
   // Unreal matches sections and keys without regard to case.
   const current = f => {
     const section = (views[f.file].sections || []).find(s => s.name.toLowerCase() === f.section.toLowerCase());
@@ -794,6 +804,95 @@ async function gameSettings(ctx, running, reload) {
       : h('p', { class: 'muted small', text: 'Хранятся в INI-файлах игры (вкладка «Конфиги»), вступают в силу при следующем запуске.' }),
     h('div', { class: 'form' }, rows),
     h('div', { class: 'row end', style: 'margin-top:8px' }, save));
+}
+
+// ---------- game log levels ----------
+
+// Unreal's log levels, quietest first.
+const LOG_LEVELS = [
+  ['NoLogging', 'ничего'], ['Fatal', 'только фатальные'], ['Error', 'ошибки'], ['Warning', 'предупреждения'],
+  ['Display', 'важные сообщения'], ['Log', 'обычный лог'], ['Verbose', 'подробно'], ['VeryVerbose', 'очень подробно'], ['All', 'всё'],
+];
+
+// gameLogLevels edits [Core.Log] of Engine.ini: one row per log category
+// with its level, the recommended categories first, then the operator's own.
+function gameLogLevels(ctx, running, reload, views, recommended) {
+  if (views instanceof Error) return h('div', { class: 'notice bad', text: 'Не удалось прочитать Engine.ini: ' + views.message });
+  const section = (views.Engine.sections || []).find(s => s.name.toLowerCase() === 'core.log');
+  const stored = new Map((section ? section.entries : []).map(e => [e.key.toLowerCase(), e]));
+  const known = new Set(recommended.map(c => c.name.toLowerCase()));
+  const rows = [];   // { name, select, custom, stored }
+  const list = h('div', { class: 'form log-levels' });
+
+  const levelSelect = (value, recommendedLevel) => {
+    const select = h('select', { disabled: running },
+      h('option', { value: '', text: 'по умолчанию игры' }),
+      LOG_LEVELS.map(([v, t]) => h('option', { value: v, text: `${v} - ${t}` + (v === recommendedLevel ? ' (рекомендуется)' : '') })));
+    // Unreal takes the level in any case; the list shows the canonical one.
+    const match = LOG_LEVELS.find(([v]) => v.toLowerCase() === (value || '').toLowerCase());
+    if (value && !match) select.append(h('option', { value, text: value }));
+    select.value = match ? match[0] : (value || '');
+    return select;
+  };
+  const addRow = (name, value, recommendedLevel, custom) => {
+    const select = levelSelect(value, recommendedLevel);
+    const row = { name, select, custom, stored: value };
+    const remove = custom ? h('button', { class: 'ghost icon-button', text: '×', title: 'Убрать категорию', disabled: running, onclick: () => {
+      rows.splice(rows.indexOf(row), 1);
+      label.remove(); cell.remove();
+    } }) : null;
+    const label = h('label', { class: 'mono', text: name });
+    const cell = h('div', { class: 'setting-row' }, select, remove);
+    rows.push(row);
+    list.append(label, cell);
+  };
+  for (const c of recommended) {
+    const e = stored.get(c.name.toLowerCase());
+    addRow(e ? e.key : c.name, e ? e.value : '', c.level, false);
+  }
+  for (const e of (section ? section.entries : [])) {
+    if (!known.has(e.key.toLowerCase())) addRow(e.key, e.value, null, true);
+  }
+
+  const newName = h('input', { class: 'mono', placeholder: 'LogMyMod', disabled: running, autocomplete: 'off', spellcheck: 'false' });
+  const newLevel = levelSelect('Warning', null);
+  const add = h('button', { text: '+ Добавить', disabled: running, onclick: () => {
+    const name = newName.value.trim();
+    if (!/^[A-Za-z0-9_.]+$/.test(name)) { toast('Название категории - латиница, цифры, _ и точка', 'bad'); return; }
+    if (rows.some(r => r.name.toLowerCase() === name.toLowerCase())) { toast('Такая категория уже есть', 'bad'); return; }
+    addRow(name, newLevel.value, null, true);
+    rows[rows.length - 1].stored = null;
+    rows[rows.length - 1].select.value = newLevel.value;
+    newName.value = '';
+  } });
+  newName.addEventListener('keydown', e => { if (e.key === 'Enter') add.click(); });
+
+  const recommend = h('button', { text: 'Как рекомендуется', disabled: running, onclick: () => {
+    const levels = new Map(recommended.map(c => [c.name.toLowerCase(), c.level]));
+    for (const r of rows) if (levels.has(r.name.toLowerCase())) r.select.value = levels.get(r.name.toLowerCase());
+    toast('Выставлены рекомендуемые уровни - сохраните', 'info');
+  } });
+  const save = h('button', { class: 'primary', text: 'Сохранить уровни логов', disabled: running, onclick: e => act(e.target, async () => {
+    const set = {}, remove = [];
+    const kept = new Set(rows.map(r => r.name.toLowerCase()));
+    for (const r of rows) {
+      if (r.select.value === (r.stored || '')) continue;
+      if (r.select.value) set[r.name] = r.select.value; else if (r.stored) remove.push(r.name);
+    }
+    // Custom categories removed from the list go from the file too.
+    for (const [key, entry] of stored) if (!kept.has(key)) remove.push(entry.key);
+    if (!Object.keys(set).length && !remove.length) { toast('Изменений нет', 'info'); return; }
+    await api('PATCH', `/servers/${enc(ctx.id)}/config/Engine`, { set: Object.keys(set).length ? { 'Core.Log': set } : undefined,
+      remove: remove.length ? { 'Core.Log': remove } : undefined });
+    toast('Уровни логов сохранены'); reload();
+  }) });
+
+  return h('div', {}, h('h2', { text: 'Логи игры' }),
+    running ? h('div', { class: 'notice', text: 'Сервер работает: уровни меняются только на остановленном сервере - игра переписывает Engine.ini при остановке.' })
+      : h('p', { class: 'muted small', text: 'Сколько игра пишет в ConanSandbox.log по каждой категории ([Core.Log] в Engine.ini). С уровнями игры по умолчанию лог вырастает до гигабайтов; рекомендуемые - как у Dedicated Server Launcher. Вступают в силу при следующем запуске.' }),
+    list,
+    h('div', { class: 'row', style: 'margin-top:10px' }, newName, newLevel, add),
+    h('div', { class: 'row end', style: 'margin-top:10px' }, recommend, h('span', { class: 'spacer' }), save));
 }
 
 // ---------- server page ----------
@@ -1013,11 +1112,18 @@ const TAB_VIEWS = {
     const limit = h('select', {}, [200, 500, 1000, 5000].map(n => h('option', { value: n, text: n + ' строк' })));
     const auto = h('input', { type: 'checkbox', checked: true });
     const out = h('pre', { class: 'log', style: 'max-height:none' });
+    // Following the end: the box is refitted after the tab draws, and a
+    // scroll position taken before that would leave the last lines hidden.
+    let follow = true;
+    out.addEventListener('scroll', () => { follow = out.scrollHeight - out.scrollTop - out.clientHeight < 30; });
+    const observer = new ResizeObserver(() => { if (follow) out.scrollTop = out.scrollHeight; });
+    observer.observe(out);
+    onLeave(() => observer.disconnect());
     const load = async () => {
       try {
         const q = `name=${enc(name.value)}&limit=${limit.value}` + (filter.value ? `&filter=${enc(filter.value)}` : '');
         const r = await api('GET', `/servers/${enc(ctx.id)}/logs?${q}`);
-        const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 30 || !out.childNodes.length;
+        const atBottom = follow || !out.childNodes.length;
         if (r.missing) { replace(out, h('span', { class: 'muted', text: LOG_MISSING[name.value] || 'Этого лога ещё нет.' })); return; }
         replace(out, r.lines.length ? r.lines.map(line => h('span', {
           class: /\b(Error|Fatal|Critical)\b/.test(line) ? 'err' : /\bWarning\b/.test(line) ? 'hit' : '',
@@ -1227,8 +1333,13 @@ const TAB_VIEWS = {
   },
 
   async settings(body, ctx) {
-    let hooksInfo = { enabled: false, events: [], scripts: [], dir: '' };
-    try { hooksInfo = await api('GET', '/hooks'); } catch { /* shown as disabled */ }
+    // One round trip instead of one per request: over a slow link they add up.
+    const [hooksInfo, kindsList, gameViews, logCategories] = await Promise.all([
+      cached('/hooks').catch(() => ({ enabled: false, events: [], scripts: [], dir: '' })),
+      cached('/message-kinds').catch(() => []),
+      loadGameViews(ctx).catch(e => e),
+      cached('/game-log-categories').catch(() => []),
+    ]);
     const s = ctx.detail.server;
     const running = ['running', 'starting', 'stopping'].includes(ctx.detail.lifecycle.state);
 
@@ -1257,8 +1368,7 @@ const TAB_VIEWS = {
     const zombieMinutes = h('input', { type: 'number', min: 1, max: 60, value: s.zombie_check_seconds > 0 ? Math.round(s.zombie_check_seconds / 60) : 5, style: 'width:90px' });
 
     // ----- announcements: warning marks and the text of every message -----
-    let kinds = [];
-    try { kinds = await api('GET', '/message-kinds'); } catch { kinds = []; }
+    const kinds = kindsList;
     const w = s.warnings || {};
     const warnCommand = h('input', { value: w.command || 'broadcast', style: 'width:160px' });
     const delayInput = h('input', { type: 'number', min: 1, max: 120, value: w.delay_minutes || 15, style: 'width:90px' });
@@ -1342,7 +1452,8 @@ const TAB_VIEWS = {
       toast('Сервер удалён'); location.hash = '#/';
     }) });
 
-    const gameBox = h('div', { class: 'panel' }, await gameSettings(ctx, running, () => TAB_VIEWS.settings(body, ctx)));
+    const gameBox = h('div', { class: 'panel' }, gameSettings(ctx, running, () => TAB_VIEWS.settings(body, ctx), gameViews));
+    const logsBox = h('div', { class: 'panel' }, gameLogLevels(ctx, running, () => TAB_VIEWS.settings(body, ctx), gameViews, logCategories));
     replace(body,
       h('div', { class: 'panel' }, h('h2', { text: 'Менеджер' }),
         h('p', { class: 'muted small', text: 'Настройки менеджера' }),
@@ -1365,6 +1476,7 @@ const TAB_VIEWS = {
           field('Доп. аргументы запуска', inputs.launch_args, 'Порты, карта и multihome передаются автоматически.'),
           field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 - как в игре. Пишется в Game.ini перед стартом; каждый бэкап копирует базу целиком.'))),
       gameBox,
+      logsBox,
       h('div', { class: 'panel' }, h('h2', { text: 'Оповещения' }),
         h('p', { class: 'muted small' }, 'В игру - через RCON (нужен включённый RCON в «Настройках игры»), всегда, даже если никого нет. В Discord, Telegram и на свои адреса - в каналы, которые берут это сообщение (страница ', h('a', { href: '#/notifications', text: 'Уведомления' }), '). Эмодзи и коды вида :warning: остаются только там: в игру текст уходит без них - шрифт игры их не рисует.'),
         h('div', { class: 'form' },
