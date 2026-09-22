@@ -38,6 +38,11 @@ func (c *Controller) observeAvailability(ctx context.Context, cfg server.Config)
 		started = at.UTC()
 	}
 	a := watchdog.NewAvailability(endpoint, started, policy)
+	// A run already announced ready, before the manager restarted and
+	// adopted it, is not announced again: players would read that the server
+	// just started, and on_ready scripts would run twice.
+	run := c.Snapshot(cfg.ID).StartedAt
+	quiet := !run.IsZero() && c.Repo.WasReady(ctx, cfg.ID, run)
 	publish := func() {
 		c.lifecycleMu.Lock()
 		h := c.health[cfg.ID]
@@ -72,8 +77,17 @@ func (c *Controller) observeAvailability(ctx context.Context, cfg server.Config)
 			// The process starting is not the server being joinable: a large
 			// world takes minutes to load. The first query reply is.
 			if a.State == "responsive" && previous != "responsive" {
-				c.emit(events.ServerReady, cfg, "Server is accepting connections", nil)
-				_ = c.runHooks(ctx, hooks.Async, "on_ready", cfg, nil)
+				if quiet {
+					quiet = false
+				} else {
+					c.emit(events.ServerReady, cfg, "Server is accepting connections", nil)
+					_ = c.runHooks(ctx, hooks.Async, "on_ready", cfg, nil)
+					if run := c.Snapshot(cfg.ID).StartedAt; !run.IsZero() {
+						if err := c.Repo.MarkReady(ctx, cfg.ID, run); err != nil {
+							c.Logger.Warn("readiness not recorded", "server", cfg.ID, "error", err)
+						}
+					}
+				}
 			}
 			if a.State == "unavailable" && previous != "unavailable" {
 				c.emit(events.ServerUnavailable, cfg, "Server stopped answering queries", map[string]string{"error": a.Error})

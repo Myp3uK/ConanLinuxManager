@@ -23,6 +23,20 @@ type Warnings struct {
 	Steps []WarningStep `json:"steps"`
 	// Command is the console command that shows a message to every player.
 	Command string `json:"command,omitempty"`
+	// Delay is how far ahead a delayed restart is set: by the button, or
+	// when an automatic update is found. 0 means DefaultRestartDelay.
+	Delay int `json:"delay_minutes,omitempty"`
+}
+
+// DefaultRestartDelay is the delay of a delayed restart, in minutes.
+const DefaultRestartDelay = 15
+
+// DelayMinutes is the delay of a delayed restart.
+func (w Warnings) DelayMinutes() int {
+	if w.Delay > 0 {
+		return w.Delay
+	}
+	return DefaultRestartDelay
 }
 
 // DefaultWarningCommand is Conan's console command for a server-wide message.
@@ -93,13 +107,14 @@ func (w *Warnings) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Steps    []WarningStep     `json:"steps"`
 		Command  string            `json:"command"`
+		Delay    int               `json:"delay_minutes"`
 		Minutes  []int             `json:"minutes"`
 		Messages map[string]string `json:"messages"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	w.Steps, w.Command = raw.Steps, raw.Command
+	w.Steps, w.Command, w.Delay = raw.Steps, raw.Command, raw.Delay
 	if len(w.Steps) == 0 && len(raw.Minutes) > 0 {
 		for _, m := range raw.Minutes {
 			w.Steps = append(w.Steps, WarningStep{Minutes: m, Message: raw.Messages["restart"]})
@@ -124,6 +139,9 @@ func (w Warnings) validate() error {
 	}
 	if strings.ContainsAny(w.Command, " \t\r\n\x00") || len(w.Command) > 64 {
 		return ErrInvalidConfig("warning command must be a single word")
+	}
+	if w.Delay < 0 || w.Delay > maxWarningMinutes {
+		return ErrInvalidConfig(fmt.Sprintf("delay_minutes must be between 1 and %d", maxWarningMinutes))
 	}
 	return nil
 }

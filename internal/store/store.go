@@ -91,8 +91,9 @@ CREATE INDEX IF NOT EXISTS idx_events_server ON events(server_id, id DESC);
 CREATE TABLE IF NOT EXISTS notification_channels (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('discord')),
+    kind TEXT NOT NULL CHECK (kind IN ('discord', 'telegram', 'http')),
     secret TEXT NOT NULL,
+    settings TEXT NOT NULL DEFAULT '{}',
     server_id TEXT REFERENCES servers(id) ON DELETE CASCADE,
     min_severity TEXT NOT NULL DEFAULT 'info' CHECK (min_severity IN ('info', 'warning', 'error')),
     event_types TEXT NOT NULL DEFAULT '[]',
@@ -190,6 +191,17 @@ CREATE TABLE IF NOT EXISTS panel_settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS pending_restarts (
+    server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    due_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS server_ready (
+    server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+    started_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS admins (
     username TEXT PRIMARY KEY,
@@ -373,6 +385,40 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_runs_server_started
 			return missingColumns(tx, "servers", "options")
 		},
 		apply: addColumns("servers", [][2]string{{"options", "TEXT NOT NULL DEFAULT '{}'"}}),
+	},
+	{
+		// Channels were Discord only; Telegram and any HTTP endpoint came
+		// later, with settings of their own.
+		name: "notification-channels-kinds-v1",
+		needed: func(tx *sql.Tx) (bool, error) {
+			return lacksDefinition(tx, "notification_channels", "'telegram'")
+		},
+		apply: script(`
+CREATE TABLE notification_channels_v2 (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('discord', 'telegram', 'http')),
+    secret TEXT NOT NULL,
+    settings TEXT NOT NULL DEFAULT '{}',
+    server_id TEXT REFERENCES servers(id) ON DELETE CASCADE,
+    min_severity TEXT NOT NULL DEFAULT 'info' CHECK (min_severity IN ('info', 'warning', 'error')),
+    event_types TEXT NOT NULL DEFAULT '[]',
+    language TEXT NOT NULL DEFAULT 'ru' CHECK (language IN ('ru', 'en')),
+    mention TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_sent_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+INSERT INTO notification_channels_v2 (id, name, kind, secret, server_id, min_severity, event_types,
+    language, mention, enabled, last_sent_at, last_error, created_at, updated_at)
+SELECT id, name, kind, secret, server_id, min_severity, event_types,
+    language, mention, enabled, last_sent_at, last_error, created_at, updated_at
+FROM notification_channels;
+DROP TABLE notification_channels;
+ALTER TABLE notification_channels_v2 RENAME TO notification_channels;
+`),
 	},
 }
 

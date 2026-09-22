@@ -213,7 +213,10 @@ func (c *Controller) updateBeforeStart(ctx context.Context, id string) {
 		c.emit(events.UpdateFailed, cfg, "A pre_update hook refused the update", map[string]string{"error": err.Error()})
 		return
 	}
-	_ = c.message(ctx, cfg, server.MsgUpdate, updateVars(status.Latest), false)
+	// Found by the periodic check, the build was announced already.
+	if c.noteUpdate(id, status.Latest) {
+		_ = c.message(ctx, cfg, server.MsgUpdate, updateVars(status.Latest), false)
+	}
 	c.emit(events.UpdateStarted, cfg, "Updating server files before the start", map[string]string{"from": status.Installed, "to": status.Latest})
 	if _, err := os.Stat(ramstate.LayoutFor(cfg).GameDatabase); err == nil {
 		if _, err := c.takeBackup(ctx, cfg, ReasonPreUpdate); err != nil {
@@ -287,7 +290,6 @@ func (c *Controller) endUpdate(id string) {
 // It announces each new build once per server, and updates servers that have
 // auto_update enabled.
 func (c *Controller) WatchUpdates(ctx context.Context, interval time.Duration) {
-	announced := map[string]string{}
 	check := func() {
 		configs, err := c.Repo.List(ctx)
 		if err != nil {
@@ -302,19 +304,19 @@ func (c *Controller) WatchUpdates(ctx context.Context, interval time.Duration) {
 				}
 				continue
 			}
-			// With auto_update the update's own countdown announces the build;
-			// without it, the build is announced once.
-			if announced[cfg.ID] != status.Latest && !cfg.AutoUpdate {
-				running := c.Lifecycle(cfg.ID).State == "running"
-				if err := c.message(ctx, cfg, server.MsgUpdate, updateVars(status.Latest), running); err != nil {
-					c.Logger.Warn("update announcement not said in game", "server", cfg.ID, "error", err)
+			running := c.Lifecycle(cfg.ID).State == "running"
+			switch {
+			case cfg.AutoUpdate && running:
+				c.updateSoon(ctx, cfg, status.Latest)
+			case cfg.AutoUpdate:
+				// Nobody plays on a stopped server: it is updated right away.
+				if c.Lifecycle(cfg.ID).State == "idle" {
+					if _, err := c.UpdateJob(ctx, cfg.ID, UpdateOptions{}); err != nil {
+						c.Logger.Info("automatic update not started", "server", cfg.ID, "error", err)
+					}
 				}
-			}
-			announced[cfg.ID] = status.Latest
-			if cfg.AutoUpdate {
-				if _, err := c.UpdateJob(ctx, cfg.ID, UpdateOptions{Warn: true}); err != nil {
-					c.Logger.Info("automatic update not started", "server", cfg.ID, "error", err)
-				}
+			case c.noteUpdate(cfg.ID, status.Latest):
+				c.announceUpdate(ctx, cfg, updateVars(status.Latest), running)
 			}
 		}
 	}
@@ -329,6 +331,59 @@ func (c *Controller) WatchUpdates(ctx context.Context, interval time.Duration) {
 			timer.Reset(interval)
 		}
 	}
+}
+
+// updateSoon announces a new build on a running server with auto_update and
+// sets the restart that installs it: a delayed restart, or the scheduled one
+// when that comes before the delay is out. Each build is handled once, so a
+// delayed restart the operator cancelled is not set again; the build then
+// goes in at the next restart.
+func (c *Controller) updateSoon(ctx context.Context, cfg server.Config, build string) {
+	if !c.noteUpdate(cfg.ID, build) {
+		return
+	}
+	vars := updateVars(build)
+	p, err := c.planRestart(ctx, cfg, server.PendingUpdate, build)
+	var sooner ErrPlannedSooner
+	switch {
+	case err == nil:
+		vars["minutes"] = minutesUntil(p.DueAt)
+	case errors.As(err, &sooner):
+		vars["minutes"] = minutesUntil(sooner.At)
+	case errors.Is(err, ErrAlreadyPending):
+		if p := c.Pending(cfg.ID); p != nil {
+			vars["minutes"] = minutesUntil(p.DueAt)
+		}
+	default:
+		c.Logger.Warn("no restart set for the update", "server", cfg.ID, "error", err)
+	}
+	c.announceUpdate(ctx, cfg, vars, true)
+}
+
+// announceUpdate says the update message, in the game if anyone is there.
+func (c *Controller) announceUpdate(ctx context.Context, cfg server.Config, vars map[string]string, running bool) {
+	online := 0
+	if running {
+		online, _ = c.online(ctx, cfg)
+	}
+	if err := c.message(ctx, cfg, server.MsgUpdate, vars, online > 0); err != nil {
+		c.Logger.Warn("update announcement not said in game", "server", cfg.ID, "error", err)
+	}
+}
+
+// noteUpdate records that a build was announced for a server. False means it
+// had been already.
+func (c *Controller) noteUpdate(id, build string) bool {
+	c.pendingMu.Lock()
+	defer c.pendingMu.Unlock()
+	if c.updateNotes == nil {
+		c.updateNotes = map[string]string{}
+	}
+	if c.updateNotes[id] == build {
+		return false
+	}
+	c.updateNotes[id] = build
+	return true
 }
 
 // updateVars fill the update message for a new game build. Mods will pass

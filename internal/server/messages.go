@@ -3,6 +3,7 @@ package server
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // Message kinds: what the manager announces, and where. Every kind has a
@@ -42,17 +43,17 @@ type MessageKind struct {
 
 // MessageKinds lists every kind with its default, in the form's order.
 var MessageKinds = []MessageKind{
-	{Key: MsgScheduledRestart, Group: "players", Title: "Рестарт по расписанию", Game: true, Vars: "{minutes} {name}",
-		Help: "Уходит за каждый интервал предупреждений до планового рестарта или остановки. Рестарт - ровно в назначенное время.",
+	{Key: MsgScheduledRestart, Group: "players", Title: "Рестарт по расписанию", Game: true, Vars: "{minutes} {name} {reason}",
+		Help: "Уходит за каждый интервал предупреждений до планового рестарта или остановки, и до рестарта ради найденного обновления. Рестарт - ровно в назначенное время. {reason} - «обновление» у рестарта ради обновления, у планового пусто.",
 		Def:  Message{Text: "Плановый рестарт сервера через {minutes} мин.", Game: true, Discord: true}},
 	{Key: MsgUpdate, Group: "players", Title: "Найдено обновление", Game: true, Vars: "{target} {version} {minutes} {name}",
-		Help: "Когда в Steam вышла новая сборка. С автообновлением - за каждый интервал до обновления, без него - один раз. {target} - «игры» или «мода», {version} - сборка или список модов.",
+		Help: "Один раз, когда в Steam вышла новая сборка. С автообновлением и запущенным сервером менеджер тут же ставит отложенный рестарт, и {minutes} - сколько до него; если плановый рестарт наступит раньше, обновление ставится при нём, и {minutes} - сколько до планового. Дальше отсчёт идёт сообщением «Рестарт по расписанию». {target} - «игры» или «мода», {version} - сборка или список модов.",
 		Def:  Message{Text: "Найдено обновление {target}: {version}.[ Сервер будет обновлён через {minutes} мин.]", Game: true, Discord: true}},
 	{Key: MsgStarted, Group: "players", Title: "Сервер запущен", Vars: "{name}",
 		Help: "Сервер загрузился и пускает игроков. Только в Discord: в игре в этот момент ещё никого нет.",
 		Def:  Message{Text: "Сервер {name} запущен и ждёт игроков.", Discord: true}},
 	{Key: MsgManualRestart, Group: "players", Title: "Рестарт по кнопке", Game: true, Vars: "{minutes} {name}",
-		Help: "Кнопка «Рестарт». С галочкой «предупредить» - за каждый интервал, без неё - один раз перед рестартом.",
+		Help: "Кнопка «Рестарт»: с галочкой «предупредить» - за каждый интервал, без неё - один раз перед рестартом. Кнопка «Рестарт через N мин» - сразу с полным сроком, потом за каждый интервал, рестарт ровно в срок.",
 		Def:  Message{Text: "Администратор перезапускает сервер[ через {minutes} мин.]", Game: true, Discord: true}},
 	{Key: MsgManualStop, Group: "players", Title: "Остановка по кнопке", Game: true, Vars: "{minutes} {name}",
 		Help: "Кнопка «Остановить». С галочкой «предупредить» - за каждый интервал, без неё - один раз перед остановкой.",
@@ -113,12 +114,33 @@ func Render(text string, vars map[string]string) string {
 		}
 		return inner
 	})
-	return strings.TrimSpace(placeholder.ReplaceAllStringFunc(text, func(p string) string {
+	text = placeholder.ReplaceAllStringFunc(text, func(p string) string {
 		if value, ok := vars[p[1:len(p)-1]]; ok {
 			return value
 		}
 		return p
-	}))
+	})
+	return strings.Join(strings.Fields(text), " ")
+}
+
+// shortcode is a Discord emoji written as text, such as :warning:.
+var shortcode = regexp.MustCompile(`:[a-z][a-z0-9_+-]{1,39}:`)
+
+// GameText is a message as the game can show it. The game's font has no
+// emoji, which it draws as question marks, so they are left out, together
+// with Discord's :shortcodes:. One text then reads well in both places.
+func GameText(text string) string {
+	text = shortcode.ReplaceAllString(text, "")
+	text = strings.Map(func(r rune) rune {
+		switch {
+		case r > 0xFFFF, r == 0x200D, r == 0x20E3, r >= 0xFE00 && r <= 0xFE0F:
+			return -1
+		case r >= 0x2300 && unicode.Is(unicode.So, r):
+			return -1
+		}
+		return r
+	}, text)
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func (m Messages) validate() error {

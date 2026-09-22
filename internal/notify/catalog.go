@@ -20,7 +20,7 @@ var kindEvents = map[string][]events.Type{
 	server.MsgScheduledRestart: {events.RestartWarning},
 	server.MsgUpdate:           {events.UpdateAvailable},
 	server.MsgStarted:          {events.ServerReady},
-	server.MsgManualRestart:    {events.RestartManual},
+	server.MsgManualRestart:    {events.RestartManual, events.RestartCancelled},
 	server.MsgManualStop:       {events.StopManual},
 	server.MsgCrash:            {events.ServerCrashed},
 	server.MsgTechnical:        {events.ServerRestarting, events.ServerHang},

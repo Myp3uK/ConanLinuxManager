@@ -48,6 +48,8 @@ const (
 	RestartWarning Type = "restart.warning"
 	RestartManual  Type = "restart.manual"
 	StopManual     Type = "stop.manual"
+	// RestartCancelled is an operator's cancel of a delayed restart.
+	RestartCancelled Type = "restart.cancelled"
 )
 
 // Severity lets a subscriber filter without knowing every event type.

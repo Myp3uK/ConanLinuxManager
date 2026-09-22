@@ -284,7 +284,10 @@ func (a *api) notificationChannel(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
 		defer cancel()
 		if err := a.notifier.Test(ctx, id); err != nil {
-			a.fail(w, r, http.StatusBadGateway, err)
+			// The reason is the operator's to see: what the service answered,
+			// with any secret already masked, not an internal failure.
+			a.logger.Warn("notification test failed", "channel", id, "error", err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "delivered"})
@@ -646,6 +649,8 @@ func (a *api) server(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"schedule":  next,
+			"pending":   a.control.Pending(id),
+			"planned":   a.control.NextPlanned(r.Context(), id),
 			"server":    value,
 			"process":   a.control.Snapshot(id),
 			"lifecycle": a.control.Lifecycle(id),
@@ -776,6 +781,29 @@ func (a *api) serverAction(w http.ResponseWriter, r *http.Request, id, action st
 			path = "game"
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"path": path, "lines": lines})
+		return
+	}
+	if action == "delayed-restart" {
+		// A restart after the server's delay, counted down like a scheduled
+		// one; DELETE cancels it.
+		switch r.Method {
+		case http.MethodPost:
+			p, err := a.control.DelayRestart(r.Context(), id)
+			if err != nil {
+				a.fail(w, r, http.StatusConflict, err)
+				return
+			}
+			writeJSON(w, http.StatusCreated, p)
+		case http.MethodDelete:
+			if err := a.control.CancelPending(r.Context(), id); err != nil {
+				a.fail(w, r, http.StatusConflict, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.Header().Set("Allow", "POST, DELETE")
+			a.fail(w, r, http.StatusMethodNotAllowed, nil)
+		}
 		return
 	}
 	if action == "backup" && r.Method == http.MethodPost {

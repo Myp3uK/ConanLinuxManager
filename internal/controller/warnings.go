@@ -85,21 +85,17 @@ func announce(ctx context.Context, marks []int, count func() (int, error), say f
 	return failed
 }
 
-// warnUntil announces a scheduled restart or stop fixed in time: each
-// message goes out its minutes before due, and it returns at due whether
-// anyone is online or not, so the action happens exactly when it was set
-// for. Discord gets every message; the game only while someone is online.
-func (c *Controller) warnUntil(ctx context.Context, cfg server.Config, action string, due time.Time) error {
-	count := func() (int, error) {
-		players, err := c.Players(ctx, cfg.ID, true)
-		return len(players), err
-	}
+// warnUntil announces a restart or stop fixed in time: each message goes
+// out its minutes before due, and it returns at due whether anyone is online
+// or not, so the action happens exactly when it was set for. Discord gets
+// every message; the game only while someone is online.
+func (c *Controller) warnUntil(ctx context.Context, cfg server.Config, kind string, vars map[string]string, marks []int, due time.Time) error {
+	count := func() (int, error) { return c.online(ctx, cfg) }
 	say := func(minutes int, inGame bool) error {
-		return c.message(ctx, cfg, server.MsgScheduledRestart, map[string]string{"minutes": strconv.Itoa(minutes), "action": action}, inGame)
+		return c.message(ctx, cfg, kind, withVar(vars, "minutes", strconv.Itoa(minutes)), inGame)
 	}
-	marks := cfg.Warnings.Marks()
 	err := countdown(ctx, marks, due, time.Now, count, say, sleepCtx)
-	return c.warningResult(ctx, cfg, server.MsgScheduledRestart, err)
+	return c.warningResult(ctx, cfg, kind, err)
 }
 
 // countdown is the timing of warnUntil, apart from the game. A mark already

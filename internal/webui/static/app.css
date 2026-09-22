@@ -207,7 +207,9 @@ dialog:has(#confirm-extra .facts) { width: min(760px, calc(100vw - 32px)); }
 .mark { display: inline-flex; align-items: center; gap: 4px; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 2px 2px 2px 4px; }
 .mark input { border: 0; background: transparent; padding: 4px; }
 .mark button { padding: 4px 8px; }
-.msg-grid { display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr) auto auto; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
+.msg-grid { display: grid; grid-template-columns: minmax(200px, 300px) minmax(0, 1fr) auto auto; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
 .msg-title { display: flex; align-items: center; gap: 6px; }
 .msg-flag { white-space: nowrap; flex-wrap: nowrap; }
 @media (max-width: 900px) { .msg-grid { grid-template-columns: 1fr; } .msg-title { margin-top: 8px; } }
+.kind-switch { margin: 4px 0 6px; }
+textarea.secret-area:not(:placeholder-shown) { -webkit-text-security: disc; }

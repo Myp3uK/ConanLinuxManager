@@ -78,6 +78,7 @@ func main() {
 	// Servers the operator left running come back after a reboot. Adoption of
 	// still-running units has already happened, so nothing starts twice.
 	go control.Reconcile(ctx)
+	go control.ResumePending(ctx)
 	go control.WatchRcon(ctx)
 	go control.WatchStats(ctx)
 	if cfg.UpdateCheckInterval > 0 {

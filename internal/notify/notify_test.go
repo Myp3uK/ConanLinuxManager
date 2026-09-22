@@ -95,7 +95,7 @@ func TestWebhookTokenIsNeverStoredOrShownInClear(t *testing.T) {
 }
 
 func TestChannelFilters(t *testing.T) {
-	c := Channel{Enabled: true, webhook: webhook, MinSeverity: "warning", EventTypes: []string{}}
+	c := Channel{Enabled: true, Kind: KindDiscord, secret: secret{URL: webhook}, MinSeverity: "warning", EventTypes: []string{}}
 	crash := events.Event{Type: events.ServerCrashed, Severity: events.Error, ServerID: "a"}
 	ready := events.Event{Type: events.ServerReady, Severity: events.Info, ServerID: "a"}
 	if !c.wants(crash) || c.wants(ready) {

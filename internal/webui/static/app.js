@@ -321,12 +321,33 @@ function actionButtons(detail, refresh) {
       const job = await api('POST', `/servers/${enc(id)}/restart`, { warn: warn.checked });
       refresh(); await runJob(job); refresh();
     }) });
+  const delay = (detail.server.warnings && detail.server.warnings.delay_minutes) || 15;
+  const pending = detail.pending;
+  const later = pending
+    ? h('button', { class: 'primary', text: 'Отменить рестарт', title: (pending.reason === 'update' ? 'Рестарт ради обновления' : 'Отложенный рестарт') + ' в ' + fmtTime(pending.due_at),
+      onclick: e => act(e.target, async () => {
+        const why = pending.reason === 'update' ? ' Обновление тогда поставится при следующем рестарте.' : '';
+        if (!await ask(`Отменить рестарт «${detail.server.name}» в ${fmtTime(pending.due_at)}? Игрокам об отмене не сообщается.` + why, { ok: 'Отменить рестарт' })) return;
+        await api('DELETE', `/servers/${enc(id)}/delayed-restart`); toast('Отложенный рестарт отменён'); refresh();
+      }) })
+    : h('button', { text: `Рестарт через ${delay} мин`, disabled: !running,
+      onclick: e => act(e.target, async () => {
+        const at = new Date(Date.now() + delay * 60000);
+        const marks = steps.map(x => x.minutes).filter(m => m < delay).sort((a, b) => b - a);
+        const plan = detail.planned;
+        if (plan && plan.source === 'schedule' && new Date(plan.at) <= at) {
+          toast(`Плановый ${plan.action === 'stop' ? 'стоп' : 'рестарт'} раньше - в ${fmtTime(plan.at)}`, 'bad'); return;
+        }
+        if (!await ask(`Перезапустить «${detail.server.name}» в ${fmtTime(at)}? Игроки сразу получат «Рестарт по кнопке» с ${delay} мин.` +
+          (marks.length ? `, затем за ${marks.join(', ')} мин.` : '.') + ' Рестарт - ровно в срок, даже если никого нет.', { ok: 'Поставить', danger: false })) return;
+        await api('POST', `/servers/${enc(id)}/delayed-restart`); toast(`Рестарт в ${fmtTime(at)}`); refresh();
+      }) });
   const kill = h('button', { class: 'danger', text: 'Убить', disabled: !(running || state === 'stopping'),
     onclick: e => act(e.target, async () => {
       if (!await ask(`Убить процесс «${detail.server.name}» без сохранения? Будет потерян прогресс с последнего сохранения; после выхода база проверяется.`, { ok: 'Убить' })) return;
       await api('POST', `/servers/${enc(id)}/kill`); toast('Процесс убит'); refresh();
     }) });
-  return h('div', { class: 'row' }, start, stop, restart, kill);
+  return h('div', { class: 'row' }, start, stop, restart, later, kill);
 }
 
 // ---------- server statistics ----------
@@ -352,6 +373,10 @@ function sparkline(values, max) {
   line.setAttribute('points', points);
   svg.append(line);
   return svg;
+}
+
+function fmtTime(at) {
+  return new Date(at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
 function countdownText(at) {
@@ -386,13 +411,14 @@ function statsPanel(d) {
     if (p) tiles.push(tile('Память', fmtBytes(p.rss_bytes), g && g.process_peak_bytes ? 'пик ' + fmtBytes(g.process_peak_bytes) : `${p.threads} потоков`,
       sparkline(hist.map(x => x.rss)), 'Сколько оперативной памяти занимает процесс сервера (RSS). Пик - из отчёта игры.'));
     if (g) tiles.push(tile('Аптайм', fmtUptime(g.uptime_seconds), g.npcs ? `NPC в мире: ${g.npcs}` : null, null));
-    const sch = d.schedule;
-    if (sch && sch.enabled && isSet(sch.next_run)) {
-      const at = new Date(sch.next_run);
+    const plan = d.planned;
+    if (plan && isSet(plan.at)) {
+      const at = new Date(plan.at);
       const today = at.toDateString() === new Date().toDateString();
-      const label = { restart: 'След. рестарт', stop: 'След. остановка', start: 'След. запуск' }[sch.action] || 'По расписанию';
-      tiles.push(tile(label, (today ? '' : at.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' ') + at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-        h('span', { class: 'countdown', 'data-at': sch.next_run, text: countdownText(sch.next_run) }), null));
+      const label = plan.source === 'update' ? 'Рестарт: обновление' : plan.source === 'manual' ? 'Отложенный рестарт' : plan.action === 'stop' ? 'След. остановка' : 'След. рестарт';
+      tiles.push(tile(label, (today ? '' : at.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' ') + fmtTime(at),
+        h('span', { class: 'countdown', 'data-at': plan.at, text: countdownText(plan.at) }), null,
+        plan.source === 'schedule' ? null : 'Отменить - кнопкой «Отменить рестарт» вверху.'));
     }
   }
   if (host.mem_total_bytes) {
@@ -1086,6 +1112,7 @@ const TAB_VIEWS = {
     try { kinds = await api('GET', '/message-kinds'); } catch { kinds = []; }
     const w = s.warnings || {};
     const warnCommand = h('input', { value: w.command || 'broadcast', style: 'width:160px' });
+    const delayInput = h('input', { type: 'number', min: 1, max: 120, value: w.delay_minutes || 15, style: 'width:90px' });
     const marksBox = h('div', { class: 'row' });
     const addMark = minutes => {
       const m = h('input', { type: 'number', min: 1, max: 120, value: minutes, style: 'width:76px' });
@@ -1134,8 +1161,8 @@ const TAB_VIEWS = {
       if (zombie !== (s.zombie_check_seconds || 0)) patch.zombie_check_seconds = zombie;
       const marks = readMarks();
       if (new Set(marks).size !== marks.length) throw new Error('Интервалы предупреждений не должны повторяться');
-      const warnings = { steps: marks.map(minutes => ({ minutes, message: '' })), command: warnCommand.value.trim() || 'broadcast' };
-      const before = { steps: ((w.steps || []).map(x => x.minutes)).sort((a, b) => b - a).map(minutes => ({ minutes, message: '' })), command: w.command || 'broadcast' };
+      const warnings = { steps: marks.map(minutes => ({ minutes, message: '' })), command: warnCommand.value.trim() || 'broadcast', delay_minutes: +delayInput.value || 15 };
+      const before = { steps: ((w.steps || []).map(x => x.minutes)).sort((a, b) => b - a).map(minutes => ({ minutes, message: '' })), command: w.command || 'broadcast', delay_minutes: w.delay_minutes || 15 };
       if (JSON.stringify(warnings) !== JSON.stringify(before)) patch.warnings = warnings;
       if (kinds.length) {
         const messages = readMessages();
@@ -1175,7 +1202,7 @@ const TAB_VIEWS = {
           field('Перезапускать при падении', inputs.restart_on_crash, 'До 3 раз за 30 минут, затем сервер остаётся выключенным и приходит уведомление.'),
           field('Проверка на зомби', h('div', { class: 'row' }, zombieOn, zombieMinutes, h('span', { class: 'muted', text: 'мин' })),
             'Если процесс жив, но не отвечает на запросы Steam столько минут после загрузки - сервер останавливается (с проверкой базы) и запускается снова.'),
-          field('Автообновление', inputs.auto_update, 'Проверка обновлений игры при запуске сервера (вручную или по расписанию) и каждые 30 минут во время работы. Если в Steam новая сборка: при запуске она ставится до старта, на работающем сервере - с предупреждением игроков, бэкапом и рестартом.\nПосле падения и после перезагрузки хоста сервер поднимается без проверки, чтобы не ждать Steam.\nМоды пока не обновляются - они будут отдельным этапом.'),
+          field('Автообновление', inputs.auto_update, 'Проверка обновлений игры при запуске сервера (вручную или по расписанию) и каждые 30 минут во время работы.\nНашлась новая сборка на работающем сервере: сразу сообщение «Найдено обновление» и отложенный рестарт (см. «Оповещения»), дальше отсчёт как у планового; при рестарте - бэкап и обновление. Если плановый рестарт раньше - обновление ставится при нём. Выключенный сервер обновляется сразу.\nПосле падения и после перезагрузки хоста сервер поднимается без проверки, чтобы не ждать Steam.\nМоды пока не обновляются - они будут отдельным этапом.'),
           field('Бэкап при остановке', inputs.backup_on_stop, 'Копия мира в бэкапы менеджера после каждой нормальной остановки.'))),
       h('div', { class: 'panel' }, h('h2', { text: 'Запуск' }),
         h('p', { class: 'muted small', text: 'Меняются только на остановленном сервере.' }),
@@ -1190,9 +1217,10 @@ const TAB_VIEWS = {
           field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 - как в игре. Пишется в Game.ini перед стартом; каждый бэкап копирует базу целиком.'))),
       gameBox,
       h('div', { class: 'panel' }, h('h2', { text: 'Оповещения' }),
-        h('p', { class: 'muted small' }, 'В игру - через RCON (нужен включённый RCON в «Настройках игры»), только если кто-то онлайн. В Discord - в каналы, которые берут это сообщение (страница ', h('a', { href: '#/notifications', text: 'Уведомления' }), ').'),
+        h('p', { class: 'muted small' }, 'В игру - через RCON (нужен включённый RCON в «Настройках игры»), только если кто-то онлайн. В Discord, Telegram и на свои адреса - в каналы, которые берут это сообщение (страница ', h('a', { href: '#/notifications', text: 'Уведомления' }), '). Эмодзи и коды вида :warning: остаются только там: в игру текст уходит без них - шрифт игры их не рисует.'),
         h('div', { class: 'form' },
-          field('Предупреждать за', marksBox, 'Интервалы отсчёта перед рестартом, остановкой и обновлением. Плановый рестарт - ровно в назначенное время, предупреждения уходят заранее. Рестарт и остановка по кнопке с галочкой «предупредить» и автообновление начинают отсчёт сразу и не ждут, если на сервере никого нет.\nПусто - без отсчёта: одно сообщение в момент действия.'),
+          field('Предупреждать за', marksBox, 'Интервалы отсчёта. Плановый и отложенный рестарт - ровно в назначенное время, предупреждения уходят заранее, есть кто онлайн или нет. Рестарт и остановка по кнопке с галочкой «предупредить» начинают отсчёт сразу и не ждут, если на сервере никого нет.\nПусто - без отсчёта.'),
+          field('Отложенный рестарт через, мин', delayInput, 'Кнопка «Рестарт через N мин» и рестарт ради найденного обновления ставятся на столько минут вперёд. Если плановый рестарт наступит раньше, обновление ставится при нём, а кнопка откажет.'),
           field('RCON-команда объявления', warnCommand, 'У Conan это broadcast.')),
         h('h3', { text: 'Для игроков' }),
         h('div', { class: 'msg-grid' }, kinds.map((k, i) => k.group === 'players' ? msgRows[i] : null)),
@@ -1242,6 +1270,20 @@ function channelCategories(c, cats) {
   return cats.filter(x => x.types.some(t => c.event_types.includes(t))).map(x => x.key);
 }
 
+const KIND_NAMES = { discord: 'Discord', telegram: 'Telegram', http: 'HTTP' };
+// The same as the server's DefaultBody.
+const DEFAULT_BODY = `{
+  "event": "{event}",
+  "kind": "{kind}",
+  "severity": "{severity}",
+  "server": "{server}",
+  "server_id": "{server_id}",
+  "title": "{title}",
+  "text": "{text}",
+  "time": "{time}",
+  "details": {details}
+}`;
+
 const AUDIENCES = [['players', 'Для игроков', 'Можно направить в общий канал сервера. Тексты задаются у каждого сервера: «Настройки» → «Оповещения».'], ['admins', 'Для админов', 'Технические сообщения; упоминание роли ставится только к ним.']];
 
 async function viewNotifications() {
@@ -1255,7 +1297,7 @@ async function viewNotifications() {
     let channels = [];
     try { channels = await api('GET', '/notifications'); } catch (e) { replace(listBox, h('div', { class: 'notice bad', text: e.message })); return; }
     if (!channels.length) {
-      replace(listBox, h('div', { class: 'panel' }, h('p', { class: 'muted', text: 'Каналов пока нет. Добавьте первый - это вебхук Discord-канала, куда менеджер будет писать.' })));
+      replace(listBox, h('div', { class: 'panel' }, h('p', { class: 'muted', text: 'Каналов пока нет. Канал - это Discord-канал (вебхук), чат Telegram (бот) или свой адрес (HTTP), куда менеджер будет писать.' })));
       return;
     }
     replace(listBox, h('div', { class: 'grid' }, channels.map(c => {
@@ -1266,12 +1308,12 @@ async function viewNotifications() {
         facts([
           ['Серверы', c.server_id ? serverName(c.server_id) : 'все'],
           ['Присылает', cats.filter(x => keys.includes(x.key)).map(x => x.title).join(', ') || '-'],
-          ['Упоминание', c.mention ? h('span', { class: 'mono', text: c.mention }) : 'нет'],
-          ['Вебхук', h('span', { class: 'mono small', text: c.webhook })],
+          c.kind === 'discord' && ['Упоминание', c.mention ? h('span', { class: 'mono', text: c.mention }) : 'нет'],
+          ['Куда', h('span', {}, h('span', { class: 'badge', text: KIND_NAMES[c.kind] || c.kind }), ' ', h('span', { class: 'mono small', text: c.target }))],
           ['Последняя отправка', c.last_error ? h('span', { class: 'small', style: 'color:var(--bad)', text: c.last_error }) : c.last_sent_at ? fmtAgo(c.last_sent_at) : 'ещё не было'],
         ]),
         h('div', { class: 'row' },
-          h('button', { text: 'Отправить тест', onclick: e => act(e.target, async () => { await api('POST', `/notifications/${enc(c.id)}/test`); toast('Тестовое сообщение отправлено - проверьте канал в Discord'); draw(); }) }),
+          h('button', { text: 'Отправить тест', onclick: e => act(e.target, async () => { await api('POST', `/notifications/${enc(c.id)}/test`); toast('Тестовое сообщение отправлено - проверьте, дошло ли'); draw(); }) }),
           h('button', { text: 'Изменить', onclick: () => showForm(c) }),
           h('span', { class: 'spacer' }),
           h('button', { class: 'danger', text: 'Удалить', onclick: e => act(e.target, async () => {
@@ -1281,14 +1323,65 @@ async function viewNotifications() {
     })));
   };
 
-  const showForm = channel => {
-    const c = channel || { enabled: true, language: 'ru', min_severity: 'info', event_types: [] };
-    const name = h('input', { value: c.name || 'Discord', autocomplete: 'off' });
-    const url = h('input', { class: 'mono', placeholder: channel ? 'оставьте пустым, чтобы не менять' : 'https://discord.com/api/webhooks/...', autocomplete: 'off' });
+  const showForm = (channel, kind) => {
+    const c = channel || { kind, enabled: true, language: 'ru', min_severity: 'info', event_types: [], settings: kind === 'http' ? { method: 'POST', content_type: 'application/json', body: DEFAULT_BODY } : { proxy: kind === 'telegram' } };
+    kind = c.kind;
+    const st = c.settings || {};
+    const keep = channel ? 'оставьте пустым, чтобы не менять' : '';
+    const name = h('input', { value: c.name || { discord: 'Discord', telegram: 'Telegram', http: 'Мой сайт' }[kind], autocomplete: 'off' });
     const server = h('select', {}, h('option', { value: '', text: 'Все серверы' }), servers.map(s => h('option', { value: s.id, text: s.name, selected: c.server_id === s.id })));
     const language = h('select', {}, [['ru', 'Русский'], ['en', 'English']].map(([v, t]) => h('option', { value: v, text: t, selected: c.language === v })));
-    const mention = h('input', { class: 'mono', value: c.mention || '', placeholder: '<@&123456789012345678>' });
     const enabled = h('input', { type: 'checkbox', checked: c.enabled });
+    const proxy = h('input', { type: 'checkbox', checked: !!st.proxy });
+    const proxyHelp = 'Через прокси со страницы «Панель» (CONAN_MANAGER_NOTIFY_PROXY). Нужен, если хост не видит сервис напрямую. Без прокси на панели - напрямую.';
+
+    // What differs between the kinds: where to send, and how.
+    let where = [], extra = [], collect;
+    if (kind === 'discord') {
+      const url = h('input', { class: 'mono secret', placeholder: keep || 'https://discord.com/api/webhooks/...', autocomplete: 'off' });
+      const mention = h('input', { class: 'mono', value: c.mention || '', placeholder: '<@&123456789012345678>' });
+      where = [field('Webhook URL', url, 'В Discord: настройки канала → Интеграции → Вебхуки → Новый вебхук → «Копировать URL веб-хука».\nАдрес хранится зашифрованным и дальше показывается замаскированным.')];
+      extra = [field('Упоминание при падении', mention, 'Кого позвать, когда сервер упал или нужно вмешательство. К сообщениям для игроков упоминание не ставится.\nРоль: <@&ID роли>, человек: <@ID>, или @here.\nID роли: Discord → Настройки сервера → Роли → ПКМ по роли → «Копировать ID» (нужен режим разработчика).')];
+      collect = body => { if (url.value.trim()) body.webhook_url = url.value.trim(); body.mention = mention.value.trim(); };
+    } else if (kind === 'telegram') {
+      const token = h('input', { class: 'mono secret', placeholder: keep || '123456789:AA...', autocomplete: 'off' });
+      const chat = h('input', { class: 'mono', value: st.chat_id || '', placeholder: '-1001234567890 или @channel' });
+      const thread = h('input', { type: 'number', min: 0, value: st.thread_id || '', placeholder: 'нет', style: 'width:140px' });
+      where = [
+        field('Токен бота', token, 'Telegram → @BotFather → /newbot → токен вида 123456789:AA…\nХранится зашифрованным.'),
+        field('Чат', chat, 'Куда писать. Группа: добавьте бота в группу; её id (начинается с -100) покажет, например, @getidsbot, если его добавить туда же. Канал: сделайте бота админом канала и укажите @имя_канала или id.\nЛичка: напишите боту /start и укажите свой id.'),
+        field('Тема (topic id)', thread, 'Для группы с темами: номер темы - последнее число в ссылке на сообщение в ней. Пусто - в общий чат.')];
+      extra = [field('Через прокси', proxy, proxyHelp + '\nTelegram из России часто недоступен напрямую.')];
+      collect = body => {
+        if (token.value.trim()) body.token = token.value.trim();
+        body.settings = { chat_id: chat.value.trim(), thread_id: +thread.value || 0, proxy: proxy.checked };
+      };
+    } else {
+      const url = h('input', { class: 'mono secret', placeholder: keep || 'https://example.com/api/conan', autocomplete: 'off' });
+      const method = h('select', {}, ['POST', 'PUT', 'PATCH', 'GET', 'DELETE'].map(m => h('option', { value: m, text: m, selected: (st.method || 'POST') === m })));
+      const type = h('select', {}, [['application/json', 'JSON'], ['application/x-www-form-urlencoded', 'Форма (x-www-form-urlencoded)'], ['text/plain', 'Текст']].map(([v, t]) => h('option', { value: v, text: t, selected: (st.content_type || 'application/json') === v })));
+      const body = h('textarea', { class: 'mono', rows: 11, spellcheck: 'false' });
+      body.value = st.body || '';
+      const headers = h('textarea', { class: 'mono secret-area', rows: 3, spellcheck: 'false', placeholder: (c.headers && c.headers.length ? 'Сохранены: ' + c.headers.join(', ') + '. ' + keep : 'Authorization: Bearer ...\nX-Api-Key: ...') });
+      const clearHeaders = h('input', { type: 'checkbox' });
+      const allowPrivate = h('input', { type: 'checkbox', checked: !!st.allow_private });
+      const vars = 'Переменные: {text} - текст сообщения, {title} - заголовок, {server} - имя сервера, {server_id}, {event} - тип события (server.crashed…), {kind} - вид сообщения (crash, update…), {severity} - info / warning / error, {time} - время UTC, {details} - все поля события объектом JSON.';
+      where = [
+        field('Адрес', url, 'http:// или https://. В адресе тоже можно ставить переменные, например ?text={text} - они кодируются для URL.\nХранится зашифрованным: в адресе часто ключ.'),
+        field('Метод', method, 'GET и DELETE - без тела: всё нужное передавайте в адресе.'),
+        field('Заголовки', h('div', {}, headers, c.headers && c.headers.length ? h('label', { class: 'row small' }, clearHeaders, 'удалить сохранённые') : null), 'По одному на строку: Имя: значение. Для ключей и токенов. Хранятся зашифрованными, значения больше не показываются.\nContent-Type ставится сам по типу тела.')];
+      extra = [
+        field('Тип тела', type, 'JSON: пишите переменные внутри кавычек - "{text}"; кавычки и переносы в значениях экранируются сами. {details} - без кавычек, это объект.\nФорма: text={text}&server={server}.\nТекст: как есть.'),
+        field('Тело', body, vars + '\nПусто - запрос без тела.'),
+        field('Через прокси', proxy, proxyHelp),
+        field('Разрешить локальные адреса', allowPrivate, 'Без галочки менеджер не отправит запрос на свой хост (127.0.0.1), в локальные сети (10.x, 192.168.x…) и на служебные адреса облака - чтобы через панель нельзя было достучаться до внутренних сервисов. Включите, если ваш сайт в той же сети.')];
+      collect = b => {
+        if (url.value.trim()) b.url = url.value.trim();
+        if (headers.value.trim()) b.headers = headers.value;
+        else if (clearHeaders.checked) b.headers = '';
+        b.settings = { method: method.value, content_type: type.value, body: body.value, proxy: proxy.checked, allow_private: allowPrivate.checked };
+      };
+    }
 
     const selected = channel ? channelCategories(c, cats) : cats.filter(x => x.audience === 'players').map(x => x.key);
     const boxes = {};
@@ -1298,19 +1391,20 @@ async function viewNotifications() {
         boxes[x.key] = h('input', { type: 'checkbox', checked: selected.includes(x.key) });
         return h('label', { class: 'row event-item' }, boxes[x.key], h('span', { text: x.title }), helpIcon(x.help));
       })));
+    const kindSwitch = channel ? null : h('div', { class: 'row kind-switch' }, Object.entries(KIND_NAMES).map(([k, t]) =>
+      h('button', { class: k === kind ? 'primary' : '', text: t, onclick: () => showForm(null, k) })));
 
-    replace(formBox, h('div', { class: 'panel' }, h('h2', { text: channel ? `Канал «${c.name}»` : 'Новый канал Discord' }),
+    replace(formBox, h('div', { class: 'panel' }, h('h2', { text: channel ? `Канал «${c.name}»` : 'Новый канал' }),
+      kindSwitch,
       h('h3', { text: '1. Куда писать' }),
-      h('div', { class: 'form' },
-        field('Webhook URL', url, 'В Discord: настройки канала → Интеграции → Вебхуки → Новый вебхук → «Копировать URL веб-хука».\nАдрес хранится зашифрованным и дальше показывается замаскированным.'),
+      h('div', { class: 'form' }, where,
         field('Название', name, 'Для себя: чтобы отличать каналы в этом списке.'),
         field('Серверы', server, 'От каких серверов присылать сообщения.')),
       h('h3', { text: '2. Что присылать' }),
       h('div', { class: 'category-groups' }, columns),
       h('h3', { text: '3. Оформление' }),
-      h('div', { class: 'form' },
-        field('Упоминание при падении', mention, 'Кого позвать, когда сервер упал или нужно вмешательство. К сообщениям для игроков упоминание не ставится.\nРоль: <@&ID роли>, человек: <@ID>, или @here.\nID роли: Discord → Настройки сервера → Роли → ПКМ по роли → «Копировать ID» (нужен режим разработчика).'),
-        field('Язык сообщений', language),
+      h('div', { class: 'form' }, extra,
+        field('Язык сообщений', language, 'Язык заголовков и названий полей. Тексты сообщений - те, что заданы у сервера.'),
         field('Включён', enabled)),
       h('div', { class: 'row end', style: 'margin-top:14px' },
         h('button', { class: 'ghost', text: 'Отмена', onclick: () => replace(formBox) }),
@@ -1318,22 +1412,23 @@ async function viewNotifications() {
           const types = [...new Set(cats.filter(x => boxes[x.key].checked).flatMap(x => x.types))];
           if (!types.length) throw new Error('Выберите хотя бы одно сообщение');
           const body = { name: name.value.trim(), server_id: server.value, min_severity: 'info', event_types: types,
-            language: language.value, mention: mention.value.trim(), enabled: enabled.checked };
-          if (url.value.trim()) body.webhook_url = url.value.trim();
+            language: language.value, enabled: enabled.checked };
+          if (!channel) body.kind = kind;
+          collect(body);
           const saved = channel ? await api('PATCH', `/notifications/${enc(channel.id)}`, body) : await api('POST', '/notifications', body);
           replace(formBox); await draw();
           if (!channel && saved && saved.id && await ask('Канал добавлен. Отправить тестовое сообщение, чтобы проверить?', { ok: 'Отправить', danger: false })) {
-            await api('POST', `/notifications/${enc(saved.id)}/test`); toast('Тестовое сообщение отправлено - проверьте канал в Discord'); draw();
+            await api('POST', `/notifications/${enc(saved.id)}/test`); toast('Тестовое сообщение отправлено - проверьте, дошло ли'); draw();
           } else toast('Сохранено');
         }) }))));
     formBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    (channel ? name : url).focus();
+    name.focus();
   };
 
   replace(app,
     h('div', { class: 'head' }, h('h1', { text: 'Уведомления' }),
-      h('button', { class: 'primary', text: '+ Добавить канал', onclick: () => showForm(null) })),
-    h('p', { class: 'muted small' }, 'Менеджер пишет в Discord через вебхуки: один вебхук - один канал. Обычно заводят два: для игроков (запуски, рестарты, обновления) и для админов (падения) с упоминанием роли. Свои тексты «Сервер готов / перезапущен / остановлен» задаются у каждого сервера во вкладке «Настройки». Если хост не видит Discord, укажите прокси на странице ', h('a', { href: '#/panel', text: 'Панель' }), '.'),
+      h('button', { class: 'primary', text: '+ Добавить канал', onclick: () => showForm(null, 'discord') })),
+    h('p', { class: 'muted small' }, 'Канал - это куда менеджер пишет: Discord-канал (вебхук), чат Telegram (бот) или свой адрес (HTTP-запрос с вашими заголовками и телом). Обычно заводят два: для игроков (рестарты, обновления, запуск) и для админов (падения). Тексты сообщений задаются у каждого сервера: «Настройки» → «Оповещения». Если хост не видит Discord или Telegram, укажите прокси на странице ', h('a', { href: '#/panel', text: 'Панель' }), '.'),
     formBox, listBox);
   await draw();
 }

@@ -129,6 +129,9 @@ func TestRenderDropsPartsWithoutValues(t *testing.T) {
 	if got := server.Render(text, nil); got != "Администратор перезапускает сервер" {
 		t.Fatalf("%q", got)
 	}
+	if got := server.Render("Администратор перезапускает сервер [ через {minutes} мин.]", map[string]string{"minutes": "15"}); got != "Администратор перезапускает сервер через 15 мин." {
+		t.Fatalf("%q", got)
+	}
 	if got := server.Render("Найдено обновление {target}: {version}. {unknown}", map[string]string{"target": "игры", "version": "сборка 7"}); got != "Найдено обновление игры: сборка 7. {unknown}" {
 		t.Fatalf("%q", got)
 	}

@@ -30,21 +30,27 @@ type Controller struct {
 	// opLocks serialise start, stop and kill per server. They used to be one
 	// global mutex, so a slow hook or save on one server held up every other.
 	// Servers that share directories are kept apart by reservations instead.
-	opLocksMu          sync.Mutex
-	opLocks            map[string]*sync.Mutex
-	Repo               *server.Repository
-	Processes          *process.Manager
-	Launcher           *launchservice.Manager
-	Logs               logreader.Reader
-	Tmpfs              tmpfs.Manager
-	RAM                ramstate.Manager
-	Steam              Steam
-	Logger             *slog.Logger
-	jobs               map[string]Job
-	rconMu             sync.Mutex
-	rconSessions       map[string]*rconSession
-	statsMu            sync.Mutex
-	stats              map[string]*statsState
+	opLocksMu    sync.Mutex
+	opLocks      map[string]*sync.Mutex
+	Repo         *server.Repository
+	Processes    *process.Manager
+	Launcher     *launchservice.Manager
+	Logs         logreader.Reader
+	Tmpfs        tmpfs.Manager
+	RAM          ramstate.Manager
+	Steam        Steam
+	Logger       *slog.Logger
+	jobs         map[string]Job
+	rconMu       sync.Mutex
+	rconSessions map[string]*rconSession
+	statsMu      sync.Mutex
+	stats        map[string]*statsState
+	// pendingMu guards the delayed restarts, the scheduled runs under way
+	// and the builds already announced.
+	pendingMu          sync.Mutex
+	pending            map[string]*pendingRun
+	scheduledDue       map[string]Planned
+	updateNotes        map[string]string
 	jobsMu             sync.RWMutex
 	lifecycleMu        sync.Mutex
 	closing            bool
@@ -267,7 +273,8 @@ func (c *Controller) executeSchedule(ctx context.Context, item scheduler.Schedul
 	case "start":
 		err = c.Start(ctx, item.ServerID)
 	case "stop":
-		if err = c.warnUntil(ctx, cfg, "stop", due); err == nil {
+		defer c.markScheduled(item.ServerID, Planned{At: due, Action: "stop", Source: "schedule"})()
+		if err = c.warnUntil(ctx, cfg, server.MsgScheduledRestart, map[string]string{"action": "stop"}, cfg.Warnings.Marks(), due); err == nil {
 			err = c.Stop(ctx, item.ServerID)
 		}
 	case "restart":
@@ -276,7 +283,15 @@ func (c *Controller) executeSchedule(ctx context.Context, item scheduler.Schedul
 				map[string]string{"uptime": uptime.Round(time.Second).String(), "minimum": (time.Duration(cfg.RestartMinUptimeSeconds) * time.Second).String()})
 			return nil
 		}
-		if err = c.warnUntil(ctx, cfg, "restart", due); err == nil {
+		// A delayed restart set before this one's countdown began restarts
+		// the server first; a second restart minutes later helps no one.
+		if p := c.Pending(item.ServerID); p != nil && !p.DueAt.After(due) {
+			c.emit(events.ScheduleSkipped, cfg, "Scheduled restart skipped: a delayed restart comes first",
+				map[string]string{"reason": "отложенный рестарт в " + p.DueAt.UTC().Format("15:04") + " UTC"})
+			return nil
+		}
+		defer c.markScheduled(item.ServerID, Planned{At: due, Action: "restart", Source: "schedule"})()
+		if err = c.warnUntil(ctx, cfg, server.MsgScheduledRestart, map[string]string{"action": "restart"}, cfg.Warnings.Marks(), due); err == nil {
 			err = c.Restart(ctx, item.ServerID)
 		}
 	default:
@@ -551,6 +566,8 @@ func (c *Controller) persist(cfg server.Config) {
 }
 
 func (c *Controller) Stop(ctx context.Context, id string) error {
+	// Whatever stops the server, a restart set for later has no more point.
+	c.dropPending(id)
 	defer c.lockServer(id)()
 	cfg, err := c.Repo.Get(ctx, id)
 	if err != nil {

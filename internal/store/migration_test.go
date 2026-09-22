@@ -197,3 +197,38 @@ VALUES('legacy','Legacy','ue5','native','/game','/steam',37777,37015,'/run/x','2
 		t.Fatalf("re-running migrations: %v", err)
 	}
 }
+
+// Channels stored while Discord was the only kind survive the rebuild that
+// lets Telegram and HTTP channels in.
+func TestChannelKindsUpgradeKeepsChannels(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manager.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.DB().Exec(`DELETE FROM manager_migrations;
+DROP TABLE notification_channels;
+CREATE TABLE notification_channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('discord')),
+ secret TEXT NOT NULL, server_id TEXT, min_severity TEXT NOT NULL DEFAULT 'info', event_types TEXT NOT NULL DEFAULT '[]',
+ language TEXT NOT NULL DEFAULT 'ru', mention TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+ last_sent_at TEXT, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+INSERT INTO notification_channels(id,name,kind,secret,created_at,updated_at) VALUES('c1','Admins','discord','sealed','2026-09-20','2026-09-20');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var name, settings string
+	if err := s.DB().QueryRow(`SELECT name, settings FROM notification_channels WHERE id='c1'`).Scan(&name, &settings); err != nil || name != "Admins" || settings != "{}" {
+		t.Fatalf("channel lost: %q %q %v", name, settings, err)
+	}
+	if _, err := s.DB().Exec(`INSERT INTO notification_channels(id,name,kind,secret,created_at,updated_at) VALUES('c2','TG','telegram','sealed','x','x')`); err != nil {
+		t.Fatalf("telegram refused: %v", err)
+	}
+}

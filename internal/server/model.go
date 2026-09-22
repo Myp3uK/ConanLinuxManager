@@ -75,9 +75,9 @@ type Config struct {
 	// Deprecated: Messages holds every text now; these are read once into it.
 	DiscordMessages DiscordMessages `json:"discord_messages"`
 	// Messages are the texts the manager announces, and where each goes.
-	Messages Messages `json:"messages"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	Messages  Messages  `json:"messages"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // validID names a systemd unit, a unit specification and a backup directory,

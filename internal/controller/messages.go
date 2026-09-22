@@ -75,7 +75,10 @@ func (c *Controller) message(ctx context.Context, cfg server.Config, kind string
 	details := withMessage(cfg, kind, vars, map[string]string{"kind": kind})
 	var err error
 	if cfg.Messages.Get(kind).Game && inGame {
-		_, err = c.rcon(ctx, cfg, cfg.Warnings.CommandLine(details["announce"]))
+		// Emoji stay in Discord; the game would show question marks.
+		if text := server.GameText(details["announce"]); text != "" {
+			_, err = c.rcon(ctx, cfg, cfg.Warnings.CommandLine(text))
+		}
 	}
 	c.emit(messageEvent[kind], cfg, details["announce"], details)
 	return err

@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +53,7 @@ var titles = map[events.Type]text{
 	events.RestartWarning:         {"⏳ Плановый рестарт", "⏳ Scheduled restart"},
 	events.RestartManual:          {"🔄 Рестарт сервера", "🔄 Server restart"},
 	events.StopManual:             {"⏹️ Остановка сервера", "⏹️ Server shutdown"},
+	events.RestartCancelled:       {"↩️ Отложенный рестарт отменён", "↩️ Delayed restart cancelled"},
 }
 
 var detailNames = map[string]text{
@@ -91,7 +92,7 @@ func severityRank(s string) int {
 
 // wants decides whether a channel receives an event.
 func (c Channel) wants(e events.Event) bool {
-	if !c.Enabled || c.webhook == "" {
+	if !c.Enabled || !c.usable() {
 		return false
 	}
 	if c.ServerID != "" && c.ServerID != e.ServerID {
@@ -156,47 +157,21 @@ func limit(s string, n int) string {
 }
 
 func format(e events.Event, c Channel) payload {
-	title := e.Message
-	if t, ok := titles[e.Type]; ok {
-		title = pick(t, c.Language)
+	n := summarize(e, c.Language)
+	em := embed{Title: limit(n.Title, 256), Color: colors[e.Severity], Timestamp: e.Time.UTC().Format(time.RFC3339)}
+	if n.Server != "" {
+		em.Description = "**" + limit(n.Server, 200) + "**"
 	}
-	server := e.ServerName
-	if server == "" {
-		server = e.ServerID
+	if n.Text != "" {
+		em.Description += "\n" + limit(n.Text, 2500)
 	}
-	em := embed{Title: limit(title, 256), Color: colors[e.Severity], Timestamp: e.Time.UTC().Format(time.RFC3339)}
-	if server != "" {
-		em.Description = "**" + limit(server, 200) + "**"
-	}
-	if _, known := titles[e.Type]; known && e.Message != "" && (e.Type == events.ServerRestartAbandoned || e.Type == events.ServerKilled || e.Type == events.ServerRestarting) {
-		em.Description += "\n" + limit(e.Message, 1000)
-	}
-	// A server's own text for the event is the message itself, not a field.
-	if text := e.Details["announce"]; text != "" {
-		em.Description += "\n" + limit(text, 1500)
-	}
-	keys := make([]string, 0, len(e.Details))
-	for k := range e.Details {
-		// announce is the message; discord and kind steer delivery only.
-		if k != "announce" && k != "discord" && k != "kind" {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		name := k
-		if n, ok := detailNames[k]; ok {
-			name = pick(n, c.Language)
-		}
-		value := e.Details[k]
+	for _, f := range n.Fields {
+		value := f.Value
 		inline := len(value) < 40
 		if !inline {
 			value = "```" + limit(value, 900) + "```"
 		}
-		em.Fields = append(em.Fields, embedField{Name: limit(name, 256), Value: value, Inline: inline})
-		if len(em.Fields) == 10 {
-			break
-		}
+		em.Fields = append(em.Fields, embedField{Name: limit(f.Name, 256), Value: value, Inline: inline})
 	}
 	em.Footer.Text = "conan-manager · " + string(e.Type)
 	p := payload{Username: "Conan Manager", Embeds: []embed{em}}
@@ -217,9 +192,14 @@ func format(e events.Event, c Channel) payload {
 	return p
 }
 
-// sender posts to a webhook, honouring Discord's rate limits.
+// sender posts notices, honouring rate limits. client goes through the
+// notification proxy when one is set; direct never does, and guarded
+// reaches public addresses only.
 type sender struct {
 	client   *http.Client
+	direct   *http.Client
+	guarded  *http.Client
+	proxied  bool
 	attempts int
 	sleep    func(context.Context, time.Duration) error
 }
@@ -233,24 +213,50 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// pick chooses the client for a channel: through the proxy when it asks
+// for it and one is set, else directly, to public addresses only unless
+// private ones are allowed.
+func (s sender) pick(proxy, allowPrivate bool) *http.Client {
+	switch {
+	case proxy && s.proxied, s.direct == nil:
+		return s.client
+	case allowPrivate:
+		return s.direct
+	case s.guarded != nil:
+		return s.guarded
+	}
+	return s.direct
+}
+
+// send posts to a Discord webhook.
 func (s sender) send(ctx context.Context, webhook string, p payload) error {
 	body, err := json.Marshal(p)
 	if err != nil {
 		return err
 	}
+	return s.deliver(ctx, s.client, "Discord", webhook, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		return req, err
+	})
+}
+
+// deliver makes a request until it succeeds, retrying rate limits and
+// server errors. secret is kept out of the errors: net/http puts the whole
+// URL, and with it a token, into them.
+func (s sender) deliver(ctx context.Context, client *http.Client, service, secret string, build func() (*http.Request, error)) error {
 	var last error
 	for attempt := 1; attempt <= s.attempts; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
+		req, err := build()
 		if err != nil {
-			return err
+			return fmt.Errorf("request: %s", redact(err.Error(), secret))
 		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := s.client.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
-			// The error text of a failed request contains the URL, and with it
-			// the token; report only what went wrong.
-			last = fmt.Errorf("request failed: %s", redact(err.Error(), webhook))
-			if s.sleep(ctx, time.Duration(attempt)*2*time.Second) != nil {
+			last = fmt.Errorf("request failed: %s", redact(err.Error(), secret))
+			if errors.Is(err, errPrivateAddress) || s.sleep(ctx, time.Duration(attempt)*2*time.Second) != nil {
 				return last
 			}
 			continue
@@ -262,19 +268,19 @@ func (s sender) send(ctx context.Context, webhook string, p payload) error {
 			return nil
 		case resp.StatusCode == http.StatusTooManyRequests:
 			wait := retryAfter(resp, detail)
-			last = fmt.Errorf("rate limited by Discord")
+			last = fmt.Errorf("rate limited by %s", service)
 			if s.sleep(ctx, wait) != nil {
 				return last
 			}
 		case resp.StatusCode >= 500:
-			last = fmt.Errorf("Discord returned %s", resp.Status)
+			last = fmt.Errorf("%s returned %s", service, resp.Status)
 			if s.sleep(ctx, time.Duration(attempt)*2*time.Second) != nil {
 				return last
 			}
 		default:
-			// 4xx other than 429 will not succeed on retry: a deleted
-			// webhook, or a message Discord refuses.
-			return fmt.Errorf("Discord rejected the message: %s %s", resp.Status, strings.TrimSpace(string(detail)))
+			// Other answers will not change on retry: a deleted webhook, a
+			// wrong token, or a message the service refuses.
+			return fmt.Errorf("%s rejected the message: %s %s", service, resp.Status, redact(strings.TrimSpace(string(detail)), secret))
 		}
 	}
 	return last
@@ -283,9 +289,18 @@ func (s sender) send(ctx context.Context, webhook string, p payload) error {
 func retryAfter(resp *http.Response, body []byte) time.Duration {
 	var parsed struct {
 		RetryAfter float64 `json:"retry_after"`
+		// Telegram puts it here.
+		Parameters struct {
+			RetryAfter float64 `json:"retry_after"`
+		} `json:"parameters"`
 	}
-	if json.Unmarshal(body, &parsed) == nil && parsed.RetryAfter > 0 {
-		return time.Duration(parsed.RetryAfter * float64(time.Second))
+	if json.Unmarshal(body, &parsed) == nil {
+		if parsed.RetryAfter > 0 {
+			return time.Duration(parsed.RetryAfter * float64(time.Second))
+		}
+		if parsed.Parameters.RetryAfter > 0 {
+			return time.Duration(parsed.Parameters.RetryAfter * float64(time.Second))
+		}
 	}
 	if seconds, err := strconv.ParseFloat(resp.Header.Get("Retry-After"), 64); err == nil && seconds > 0 {
 		return time.Duration(seconds * float64(time.Second))
@@ -293,6 +308,14 @@ func retryAfter(resp *http.Response, body []byte) time.Duration {
 	return 2 * time.Second
 }
 
-func redact(message, webhook string) string {
-	return strings.ReplaceAll(message, webhook, mask(webhook))
+// redact replaces a secret with its masked form.
+func redact(message, secret string) string {
+	if secret == "" {
+		return message
+	}
+	masked := "…"
+	if strings.HasPrefix(secret, "https://discord") {
+		masked = mask(secret)
+	}
+	return strings.ReplaceAll(message, secret, masked)
 }

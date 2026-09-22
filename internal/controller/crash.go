@@ -33,6 +33,7 @@ func (c *Controller) afterExit(cfg server.Config, crashed bool, exit *process.Ex
 		cfg = fresh
 	}
 	c.dropRcon(cfg.ID)
+	c.dropPending(cfg.ID)
 	details := map[string]string{}
 	if exit != nil {
 		details["exit"] = exit.String()
