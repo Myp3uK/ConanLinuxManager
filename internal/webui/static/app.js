@@ -1113,8 +1113,11 @@ const TAB_VIEWS = {
     const out = h('pre', { class: 'log', style: 'max-height:none' });
     // Following the end: the box is refitted after the tab draws, and a
     // scroll position taken before that would leave the last lines hidden.
+    // Only the operator stops the following: a scroll event also fires when
+    // the content is replaced, and would be taken for one.
     let follow = true;
-    out.addEventListener('scroll', () => { follow = out.scrollHeight - out.scrollTop - out.clientHeight < 30; });
+    const measure = () => requestAnimationFrame(() => { follow = out.scrollHeight - out.scrollTop - out.clientHeight < 30; });
+    for (const type of ['wheel', 'touchend', 'keyup', 'mouseup']) out.addEventListener(type, measure, { passive: true });
     const observer = new ResizeObserver(() => { if (follow) out.scrollTop = out.scrollHeight; });
     observer.observe(out);
     onLeave(() => observer.disconnect());
