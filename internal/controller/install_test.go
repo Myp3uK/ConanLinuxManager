@@ -34,7 +34,7 @@ func (scriptedSteam) UpdateServer(context.Context, string, string, string, bool,
 	return nil
 }
 
-func waitJob(t *testing.T, c *Controller, id string) Job {
+func waitInstall(t *testing.T, c *Controller, id string) Job {
 	t.Helper()
 	var job Job
 	waitFor(t, 5*time.Second, "install job", func() bool {
@@ -65,7 +65,7 @@ func TestInstallLeavesATrace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job = waitJob(t, c, job.ID); job.Status != "failed" {
+	if job = waitInstall(t, c, job.ID); job.Status != "failed" {
 		t.Fatalf("job %+v", job)
 	}
 	if last := c.LastJob("a", "install"); last == nil || last.ID != job.ID || last.Status != "failed" {
@@ -80,7 +80,7 @@ func TestInstallLeavesATrace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job = waitJob(t, c, job.ID); job.Status != "completed" {
+	if job = waitInstall(t, c, job.ID); job.Status != "completed" {
 		t.Fatalf("job %+v", job)
 	}
 	waitFor(t, 2*time.Second, "finished event", func() bool { return countEvents(c.Events, "a", events.InstallFinished) == 1 })
