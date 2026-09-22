@@ -8,6 +8,8 @@
 # Run it again to upgrade: the environment file, the database and the servers
 # are kept; binaries, units and the Caddy site are replaced.
 set -Eeuo pipefail
+# Nothing may fail silently: name the line that stopped the installation.
+trap 'echo "install.sh: failed at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 PREFIX="${PREFIX:-/opt/conan-manager}"
 DATA_DIR="${DATA_DIR:-/var/lib/conan-manager}"
@@ -243,7 +245,7 @@ if [[ -n "${DOMAIN}" ]]; then
   # The packaged Caddyfile only serves a placeholder page on :80, which
   # would shadow the redirect to HTTPS; it is replaced. Any other sites the
   # operator keeps there stay.
-  rest="$(grep -v '^[[:space:]]*#' "${CADDYFILE}" | tr -d '[:space:]')"
+  rest="$(grep -v '^[[:space:]]*#' "${CADDYFILE}" | tr -d '[:space:]' || true)"
   if [[ -z "${rest}" || "${rest}" == ':80{root*/usr/share/caddyfile_server}' ]]; then
     : > "${CADDYFILE}"
   fi
