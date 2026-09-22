@@ -65,7 +65,7 @@ if [[ "${UNINSTALL}" -eq 1 ]]; then
     systemctl stop "${unit}" || true
   done
   systemctl disable --now conan-manager.service 2>/dev/null || true
-  for m in $(findmnt -rn -o TARGET | grep '^/run/conan-manager' | sort -r); do umount "$m" || warn "could not unmount $m"; done
+  for m in $(findmnt -rn -o TARGET | grep '^/run/conan-manager' | sort -r || true); do umount "$m" || warn "could not unmount $m"; done
   rm -f /etc/systemd/system/conan-manager.service /etc/systemd/system/conan-server@.service \
         /etc/systemd/system/conan-launch@.service /etc/polkit-1/rules.d/50-conan-manager.rules
   rm -rf "${PREFIX}" /run/conan-manager
