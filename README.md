@@ -1227,41 +1227,53 @@ HTTP-статус результата. Туда же - входы, выходы
 
 ### Установка из исходников
 
-Прямо на сервере (Ubuntu 22.04/24.04, Debian 12). Нужен Go 1.24 или новее; в
-apt Ubuntu 24.04 он старее, поэтому - с go.dev:
+Прямо на сервере (Ubuntu 22.04/24.04, Debian 12), по шагам.
+
+**1. Git и curl**
 
 ```bash
 sudo apt-get update && sudo apt-get install -y git curl
+```
+
+**2. Go 1.24 или новее.** В apt Ubuntu 24.04 он старее, поэтому - с go.dev:
+
+```bash
 GO=$(curl -s 'https://go.dev/VERSION?m=text' | head -1)
 curl -LO "https://go.dev/dl/${GO}.linux-amd64.tar.gz"
 sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf "${GO}.linux-amd64.tar.gz"
-export PATH=$PATH:/usr/local/go/bin
-
-git clone https://github.com/Myp3uK/ConanLinuxManager.git
-cd ConanLinuxManager
-scripts/build.sh                                  # бинарники в bin/
-sudo ./install.sh --domain manager.example.com
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.profile && export PATH=$PATH:/usr/local/go/bin
+go version
 ```
 
-Репозиторий приватный, поэтому клонируется по SSH-ключу. Ключ создаётся тем
-же пользователем, который потом запускает `git clone` (без `sudo`):
+**3. Ключ для GitHub.** Репозиторий приватный: по HTTPS git спросит логин и
+пароль, а пароли GitHub не принимает. Клонируют по SSH-ключу. Ключ создаёт
+тот же пользователь, который потом запускает `git clone` (без `sudo`: иначе
+git возьмёт ключи root, и GitHub откажет):
 
 ```bash
 ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""   # ничего не спрашивает
-cat ~/.ssh/id_ed25519.pub        # открытый ключ: строка ssh-ed25519 AAAA...
+cat ~/.ssh/id_ed25519.pub                          # строка ssh-ed25519 AAAA...
 ```
 
-Ключ лежит в домашней папке: `~/.ssh/id_ed25519` - закрытый, остаётся на
-сервере; `~/.ssh/id_ed25519.pub` - открытый. Строку открытого ключа целиком
-вставьте в GitHub → репозиторий → Settings → Deploy keys → Add deploy key
-(«Allow write access» не отмечать), затем:
+`~/.ssh/id_ed25519` - закрытый ключ, остаётся на сервере;
+`~/.ssh/id_ed25519.pub` - открытый. Строку открытого ключа целиком вставьте в
+GitHub → репозиторий → Settings → Deploy keys → Add deploy key («Allow write
+access» не отмечать).
+
+**4. Клон по SSH.** При первом подключении git спросит, доверять ли
+github.com: ответьте `yes`.
 
 ```bash
 git clone -b server-management git@github.com:Myp3uK/ConanLinuxManager.git
+cd ConanLinuxManager
 ```
 
-При первом подключении git спросит, доверять ли github.com: ответьте `yes`.
-Если `sudo git clone` - git возьмёт ключи root, а не ваши, и GitHub откажет.
+**5. Сборка и установка**
+
+```bash
+scripts/build.sh                                  # бинарники в bin/
+sudo ./install.sh --domain manager.example.com    # или без --domain
+```
 
 Go и исходники после установки не нужны: менеджер работает из
 `/opt/conan-manager`.
