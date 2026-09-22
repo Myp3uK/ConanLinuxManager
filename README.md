@@ -1225,24 +1225,70 @@ HTTP-статус результата. Туда же - входы, выходы
 
 ## Установка Ubuntu
 
-Сборка для Ubuntu amd64:
+### Установка из исходников
+
+Прямо на сервере (Ubuntu 22.04/24.04, Debian 12). Нужен Go 1.24 или новее; в
+apt Ubuntu 24.04 он старее, поэтому - с go.dev:
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o conan-manager ./cmd/conan-manager
-sudo ./install.sh
+sudo apt-get update && sudo apt-get install -y git curl
+GO=$(curl -s 'https://go.dev/VERSION?m=text' | head -1)
+curl -LO "https://go.dev/dl/${GO}.linux-amd64.tar.gz"
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf "${GO}.linux-amd64.tar.gz"
+export PATH=$PATH:/usr/local/go/bin
+
+git clone https://github.com/Myp3uK/ConanLinuxManager.git
+cd ConanLinuxManager
+scripts/build.sh                                  # бинарники в bin/
+sudo ./install.sh --domain manager.example.com
+```
+
+Go и исходники после установки не нужны: менеджер работает из
+`/opt/conan-manager`.
+
+### Установка из пакета
+
+Пакет собирается на любой машине с Go:
+
+```bash
+scripts/package.sh        # dist/conan-manager-<версия>-linux-amd64.tar.gz
+```
+
+На сервере (Ubuntu 22.04/24.04, Debian 12 - нужны systemd и apt):
+
+```bash
+tar xzf conan-manager-*-linux-amd64.tar.gz && cd conan-manager-*-linux-amd64
+sudo ./install.sh --domain manager.example.com   # панель по HTTPS через Caddy
+sudo ./install.sh                                # или только 127.0.0.1:8080
 ```
 
 `install.sh`:
 
-1. проверяет права root;
-2. проверяет системные команды;
-3. создаёт пользователя `conan-manager`;
-4. создаёт `/opt/conan-manager`;
-5. создаёт `/var/lib/conan-manager`;
-6. создаёт `/etc/conan-manager`;
-7. генерирует env-файл с секретами;
-8. устанавливает systemd unit;
-9. включает и перезапускает сервис.
+1. ставит зависимости через apt: 32-битные библиотеки для SteamCMD, polkit,
+   curl (`--no-deps` - не ставить);
+2. создаёт пользователя `conan-manager`, `/opt/conan-manager` (бинарники),
+   `/var/lib/conan-manager` (0750: серверы, бэкапы, база), `/etc/conan-manager`;
+3. при первой установке создаёт файл окружения root:root 0600 со случайным
+   паролем администратора и ключом шифрования и один раз показывает пароль;
+4. ставит службу менеджера, шаблоны `conan-server@` и `conan-launch@`,
+   правило polkit, запускает менеджер и ждёт `/healthz`;
+5. с `--domain`: ставит Caddy из официального репозитория, добавляет сайт в
+   `/etc/caddy/Caddyfile` между метками `# conan-manager begin/end` (остальные
+   сайты не трогает, стандартную заглушку на :80 убирает, старую версию
+   сохраняет рядом), прописывает `TRUSTED_PROXIES` и `ALLOWED_ORIGIN`,
+   открывает 80/443 в ufw, если он включён, сверяет DNS с внешним адресом и
+   ждёт сертификат;
+6. `--allow-ips "203.0.113.10,192.168.1.0/24"` - сразу ограничивает адреса;
+   `--email` - адрес для писем Let's Encrypt.
+
+Повторный запуск - обновление: файл окружения, база и серверы остаются.
+`sudo ./install.sh --uninstall` удаляет менеджер, оставляя данные;
+с `--purge` - удаляет и серверы, бэкапы, базу, файл окружения и пользователя.
+Caddy при удалении остаётся, из Caddyfile убирается только сайт панели.
+
+Для домена за домашним роутером: A-запись на внешний адрес, проброс TCP 80 и
+443 на машину. Изнутри сети домен может не открываться, если роутер не умеет
+NAT loopback - проверяйте с мобильного интернета.
 
 Основные файлы:
 

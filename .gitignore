@@ -27,3 +27,7 @@ conan-recover-linux-amd64
 # Temporary reports and test output
 *.log
 report.json
+dist/
+
+# Binaries built by scripts/build.sh
+/bin/
