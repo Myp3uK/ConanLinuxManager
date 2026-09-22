@@ -924,7 +924,7 @@ func (a *api) serverAction(w http.ResponseWriter, r *http.Request, id, action st
 		}
 		err = a.control.Stop(r.Context(), id)
 	case "kill":
-		err = a.control.Kill(r.Context(), id)
+		err = a.control.KillByOperator(r.Context(), id)
 	case "verify":
 		// integrity_check reads the whole world; on a large one that takes
 		// longer than a request may, so it runs detached from the client.

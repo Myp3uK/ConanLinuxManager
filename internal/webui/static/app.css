@@ -102,7 +102,8 @@ label.row { cursor: pointer; }
 /* Field help: a question mark with the tooltip of moorgame.ru. */
 .help { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 17px; height: 17px; border-radius: 50%; border: 1px solid var(--line-hover); color: var(--secondary); font-size: 11px; font-weight: 700; line-height: 1; cursor: help; user-select: none; transition: all .2s ease; }
 .help:hover, .help:focus-visible { background: var(--btn); color: var(--bright); border-color: var(--btn-hover); }
-.tooltip { position: absolute; top: 0; left: 0; z-index: 40000; max-width: 340px; padding: 7px 10px; border: 1px solid var(--line-hover); border-radius: 5px; background: var(--card); color: var(--text); font-size: 13px; line-height: 1.45; text-align: left; white-space: pre-line; box-shadow: 0 6px 20px rgba(0,0,0,.45); pointer-events: none; opacity: 0; transform: translateY(-2px); transition: opacity .12s ease, transform .12s ease; }
+.tooltip { position: fixed; top: 0; left: 0; z-index: 40000; max-width: 340px; padding: 7px 10px; border: 1px solid var(--line-hover); border-radius: 5px; background: var(--card); color: var(--text); font-size: 13px; line-height: 1.45; text-align: left; white-space: pre-line; box-shadow: 0 6px 20px rgba(0,0,0,.45); pointer-events: none; opacity: 0; transform: translateY(-2px); transition: opacity .12s ease, transform .12s ease; }
+.tooltip:not(.visible) { visibility: hidden; transition: opacity .12s ease, transform .12s ease, visibility 0s .12s; }
 .tooltip.visible { opacity: 1; transform: none; }
 .tooltip::after { content: ""; position: absolute; left: var(--arrow-x, 50%); margin-left: -4px; width: 8px; height: 8px; background: var(--card); border: 1px solid var(--line-hover); transform: rotate(45deg); }
 .tooltip[data-side="top"]::after { bottom: -5px; border-left: 0; border-top: 0; }
@@ -115,7 +116,7 @@ label.row { cursor: pointer; }
 .tabs a.active { color: var(--bright); border-bottom-color: var(--accent); }
 
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
 tbody tr:hover { background: color-mix(in srgb, var(--card-hover) 45%, transparent); }
 .scroll { overflow-x: auto; }
@@ -147,12 +148,13 @@ pre.log .hit { color: var(--warn); }
 .notice.info { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
 
 #toasts { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 30000; width: max-content; max-width: min(560px, calc(100vw - 32px)); pointer-events: none; }
-.toast { background: var(--card); color: var(--bright); border: 1px solid var(--line-hover); border-left: 4px solid var(--ok); border-radius: 6px; padding: 11px 18px; box-shadow: 0 8px 28px rgba(0,0,0,.6); overflow-wrap: anywhere; pointer-events: auto; cursor: pointer; animation: toast-in .22s ease-out; }
+.toast { --tone: var(--ok); display: flex; align-items: center; justify-content: center; gap: 10px; background: var(--card); color: var(--bright); border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent); border-radius: 999px; padding: 9px 20px 9px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.55), 0 0 0 4px color-mix(in srgb, var(--tone) 10%, transparent); text-align: center; overflow-wrap: anywhere; pointer-events: auto; cursor: pointer; animation: toast-in .22s ease-out; }
+.toast::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--tone); box-shadow: 0 0 8px var(--tone); }
 .toast.leaving { animation: toast-out .35s ease-in forwards; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-12px) scale(.98); } to { opacity: 1; transform: none; } }
 @keyframes toast-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-12px) scale(.98); } }
-.toast.bad { border-left-color: var(--bad); }
-.toast.info { border-left-color: var(--accent); }
+.toast.bad { --tone: var(--bad); border-radius: 14px; }
+.toast.info { --tone: var(--accent); }
 
 dialog { border: 1px solid var(--line-hover); border-radius: 10px; background: var(--surface); color: var(--text); padding: 20px; width: min(480px, calc(100vw - 32px)); box-shadow: 0 10px 40px rgba(0,0,0,.6); }
 dialog::backdrop { background: rgba(0,0,0,.55); }
@@ -195,8 +197,7 @@ details.versions[open] > summary { margin-bottom: 10px; }
 main:has(.floating-save) { padding-bottom: 100px; }
 tr.clickable { cursor: pointer; }
 .details-line { display: block; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-table.middle td { vertical-align: middle; }
-.sha { word-break: break-all; }
+table.middle .sha { word-break: break-all; }
 .nowrap-row { flex-wrap: nowrap; }
 input.secret { -webkit-text-security: disc; }
 input.secret:focus { -webkit-text-security: none; }

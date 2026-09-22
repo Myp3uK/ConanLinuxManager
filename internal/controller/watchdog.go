@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -12,19 +13,24 @@ import (
 	"github.com/example/conan-manager/internal/hooks"
 	"github.com/example/conan-manager/internal/process"
 	"github.com/example/conan-manager/internal/server"
+	"github.com/example/conan-manager/internal/serverstats"
 	"github.com/example/conan-manager/internal/watchdog"
 )
 
 type Health struct {
-	Availability   watchdog.Availability `json:"availability"`
-	Reason         string                `json:"reason,omitempty"`
-	DetectedAt     time.Time             `json:"detected_at,omitempty"`
-	Restarts       int                   `json:"restarts"`
-	RestartPending bool                  `json:"restart_pending"`
-	RestartAt      time.Time             `json:"restart_at,omitempty"`
-	RecentCrashes  int                   `json:"recent_crashes"`
-	LastExit       *process.Exit         `json:"last_exit,omitempty"`
-	Error          string                `json:"error,omitempty"`
+	Availability watchdog.Availability `json:"availability"`
+	// Ready is set when the game reports it has loaded and accepts players;
+	// until then a running server is still starting.
+	Ready          bool          `json:"ready"`
+	ReadyAt        time.Time     `json:"ready_at,omitempty"`
+	Reason         string        `json:"reason,omitempty"`
+	DetectedAt     time.Time     `json:"detected_at,omitempty"`
+	Restarts       int           `json:"restarts"`
+	RestartPending bool          `json:"restart_pending"`
+	RestartAt      time.Time     `json:"restart_at,omitempty"`
+	RecentCrashes  int           `json:"recent_crashes"`
+	LastExit       *process.Exit `json:"last_exit,omitempty"`
+	Error          string        `json:"error,omitempty"`
 	crashes        []time.Time
 }
 
@@ -38,11 +44,7 @@ func (c *Controller) observeAvailability(ctx context.Context, cfg server.Config)
 		started = at.UTC()
 	}
 	a := watchdog.NewAvailability(endpoint, started, policy)
-	// A run already announced ready, before the manager restarted and
-	// adopted it, is not announced again: players would read that the server
-	// just started, and on_ready scripts would run twice.
-	run := c.Snapshot(cfg.ID).StartedAt
-	quiet := !run.IsZero() && c.Repo.WasReady(ctx, cfg.ID, run)
+	go c.watchStartup(ctx, cfg)
 	publish := func() {
 		c.lifecycleMu.Lock()
 		h := c.health[cfg.ID]
@@ -74,21 +76,6 @@ func (c *Controller) observeAvailability(ctx context.Context, cfg server.Config)
 			previous := a.State
 			a.Record(time.Now().UTC(), err)
 			publish()
-			// The process starting is not the server being joinable: a large
-			// world takes minutes to load. The first query reply is.
-			if a.State == "responsive" && previous != "responsive" {
-				if quiet {
-					quiet = false
-				} else {
-					c.emit(events.ServerReady, cfg, "Server is accepting connections", nil)
-					_ = c.runHooks(ctx, hooks.Async, "on_ready", cfg, nil)
-					if run := c.Snapshot(cfg.ID).StartedAt; !run.IsZero() {
-						if err := c.Repo.MarkReady(ctx, cfg.ID, run); err != nil {
-							c.Logger.Warn("readiness not recorded", "server", cfg.ID, "error", err)
-						}
-					}
-				}
-			}
 			if a.State == "unavailable" && previous != "unavailable" {
 				c.emit(events.ServerUnavailable, cfg, "Server stopped answering queries", map[string]string{"error": a.Error})
 			}
@@ -100,6 +87,64 @@ func (c *Controller) observeAvailability(ctx context.Context, cfg server.Config)
 			}
 		}
 	}
+}
+
+// watchStartup waits for the game's startup report, which is when the
+// server has loaded and accepts players; the process starting is not that,
+// a large world takes minutes. Then it announces the server as started and
+// runs on_ready. A run already announced before the manager restarted and
+// adopted it is ready without a word: players would read that the server
+// just started, and on_ready scripts would run twice.
+func (c *Controller) watchStartup(ctx context.Context, cfg server.Config) {
+	c.setReady(cfg.ID, time.Time{})
+	var scan *serverstats.Startup
+	var since time.Time
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if c.Lifecycle(cfg.ID).State != "running" {
+			continue
+		}
+		if scan == nil {
+			// An adopted unit's start time comes from systemd a moment after
+			// adoption; the run is judged by it, so it is waited for.
+			run := c.Snapshot(cfg.ID).StartedAt
+			if run.IsZero() {
+				continue
+			}
+			if c.Repo.WasReady(ctx, cfg.ID, run) {
+				c.setReady(cfg.ID, run)
+				return
+			}
+			since = run
+			scan = &serverstats.Startup{Path: filepath.Join(cfg.InstallDir, LogNames["game"])}
+		}
+		at, found, _ := scan.Find(since)
+		if !found {
+			continue
+		}
+		c.setReady(cfg.ID, at)
+		c.emit(events.ServerReady, cfg, "Server is accepting connections", nil)
+		_ = c.runHooks(ctx, hooks.Async, "on_ready", cfg, nil)
+		if err := c.Repo.MarkReady(ctx, cfg.ID, since); err != nil {
+			c.Logger.Warn("readiness not recorded", "server", cfg.ID, "error", err)
+		}
+		return
+	}
+}
+
+// setReady records readiness; a zero time means not ready yet.
+func (c *Controller) setReady(id string, at time.Time) {
+	c.lifecycleMu.Lock()
+	defer c.lifecycleMu.Unlock()
+	h := c.health[id]
+	h.Ready, h.ReadyAt = !at.IsZero(), at
+	c.health[id] = h
 }
 
 func (c *Controller) zombieLimit(id string) time.Duration {

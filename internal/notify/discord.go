@@ -53,7 +53,8 @@ var titles = map[events.Type]text{
 	events.RestartWarning:         {"⏳ Плановый рестарт", "⏳ Scheduled restart"},
 	events.RestartManual:          {"🔄 Рестарт сервера", "🔄 Server restart"},
 	events.StopManual:             {"⏹️ Остановка сервера", "⏹️ Server shutdown"},
-	events.RestartCancelled:       {"↩️ Отложенный рестарт отменён", "↩️ Delayed restart cancelled"},
+	events.RestartDelayed:         {"⏳ Технический рестарт", "⏳ Delayed restart"},
+	events.RestartCancelled:       {"↩️ Технический рестарт отменён", "↩️ Delayed restart cancelled"},
 }
 
 var detailNames = map[string]text{
@@ -77,8 +78,6 @@ var detailNames = map[string]text{
 // quiet events are left out of a channel with no explicit event list. They
 // happen on every start and carry nothing the ready event does not.
 var quiet = map[events.Type]bool{events.ServerStarting: true, events.ServerStarted: true}
-
-var colors = map[events.Severity]int{events.Info: 0x2ECC71, events.Warning: 0xF1C40F, events.Error: 0xE74C3C}
 
 func severityRank(s string) int {
 	switch s {
@@ -119,27 +118,11 @@ func pick(t text, language string) string {
 	return t.ru
 }
 
-type embedField struct {
-	Name   string `json:"name"`
-	Value  string `json:"value"`
-	Inline bool   `json:"inline"`
-}
-
-type embed struct {
-	Title       string       `json:"title"`
-	Description string       `json:"description,omitempty"`
-	Color       int          `json:"color"`
-	Fields      []embedField `json:"fields,omitempty"`
-	Timestamp   string       `json:"timestamp"`
-	Footer      struct {
-		Text string `json:"text"`
-	} `json:"footer"`
-}
-
+// payload is a Discord webhook message: the text alone, as the server's
+// message kinds set it.
 type payload struct {
-	Username        string  `json:"username"`
-	Content         string  `json:"content,omitempty"`
-	Embeds          []embed `json:"embeds"`
+	Username        string `json:"username"`
+	Content         string `json:"content"`
 	AllowedMentions struct {
 		Parse []string `json:"parse"`
 		Roles []string `json:"roles,omitempty"`
@@ -147,8 +130,8 @@ type payload struct {
 	} `json:"allowed_mentions"`
 }
 
-// limit truncates to Discord's field sizes; an over-long embed is rejected
-// outright and the notice would be lost.
+// limit truncates to a service's message size; an over-long message is
+// rejected outright and the notice would be lost.
 func limit(s string, n int) string {
 	if len([]rune(s)) <= n {
 		return s
@@ -156,40 +139,43 @@ func limit(s string, n int) string {
 	return string([]rune(s)[:n-1]) + "…"
 }
 
+// mentionFor is the channel's mention, which only errors carry.
+func mentionFor(e events.Event, c Channel) string {
+	if c.Mention != "" && e.Severity == events.Error {
+		return c.Mention
+	}
+	return ""
+}
+
 func format(e events.Event, c Channel) payload {
-	n := summarize(e, c.Language)
-	em := embed{Title: limit(n.Title, 256), Color: colors[e.Severity], Timestamp: e.Time.UTC().Format(time.RFC3339)}
-	if n.Server != "" {
-		em.Description = "**" + limit(n.Server, 200) + "**"
-	}
-	if n.Text != "" {
-		em.Description += "\n" + limit(n.Text, 2500)
-	}
-	for _, f := range n.Fields {
-		value := f.Value
-		inline := len(value) < 40
-		if !inline {
-			value = "```" + limit(value, 900) + "```"
-		}
-		em.Fields = append(em.Fields, embedField{Name: limit(f.Name, 256), Value: value, Inline: inline})
-	}
-	em.Footer.Text = "conan-manager · " + string(e.Type)
-	p := payload{Username: "Conan Manager", Embeds: []embed{em}}
+	text := summarize(e, c.Language).plain()
+	p := payload{Username: "Conan Manager", Content: limit(text, 1900)}
 	// Nothing in an event may ping anyone; only the configured mention can,
 	// and only for errors.
 	p.AllowedMentions.Parse = []string{}
-	if c.Mention != "" && e.Severity == events.Error {
-		p.Content = c.Mention
+	if mention := mentionFor(e, c); mention != "" {
+		p.Content = mention + " " + p.Content
 		switch {
-		case c.Mention == "@here" || c.Mention == "@everyone":
+		case mention == "@here" || mention == "@everyone":
 			p.AllowedMentions.Parse = []string{"everyone"}
-		case strings.HasPrefix(c.Mention, "<@&"):
-			p.AllowedMentions.Roles = []string{strings.Trim(c.Mention, "<@&>")}
+		case strings.HasPrefix(mention, "<@&"):
+			p.AllowedMentions.Roles = []string{strings.Trim(mention, "<@&>")}
 		default:
-			p.AllowedMentions.Users = []string{strings.Trim(c.Mention, "<@>")}
+			p.AllowedMentions.Users = []string{strings.Trim(mention, "<@>")}
 		}
 	}
 	return p
+}
+
+// discordBody is what a Discord channel posts: its own JSON template when it
+// has one, else the text.
+func discordBody(e events.Event, c Channel) ([]byte, error) {
+	if strings.TrimSpace(c.Settings.Body) == "" {
+		return json.Marshal(format(e, c))
+	}
+	values := summarize(e, c.Language).values()
+	values["mention"] = mentionFor(e, c)
+	return []byte(fill(c.Settings.Body, values, "application/json")), nil
 }
 
 // sender posts notices, honouring rate limits. client goes through the
@@ -234,6 +220,10 @@ func (s sender) send(ctx context.Context, webhook string, p payload) error {
 	if err != nil {
 		return err
 	}
+	return s.post(ctx, webhook, body)
+}
+
+func (s sender) post(ctx context.Context, webhook string, body []byte) error {
 	return s.deliver(ctx, s.client, "Discord", webhook, func() (*http.Request, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
 		if err == nil {

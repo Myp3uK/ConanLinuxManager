@@ -48,7 +48,9 @@ const (
 	RestartWarning Type = "restart.warning"
 	RestartManual  Type = "restart.manual"
 	StopManual     Type = "stop.manual"
-	// RestartCancelled is an operator's cancel of a delayed restart.
+	// RestartDelayed and RestartCancelled announce a delayed restart set and
+	// cancelled by an operator.
+	RestartDelayed   Type = "restart.delayed"
 	RestartCancelled Type = "restart.cancelled"
 )
 

@@ -157,15 +157,10 @@ func (c *Controller) CancelPending(ctx context.Context, id string) error {
 		return fmt.Errorf("server %q has no delayed restart", id)
 	}
 	c.dropPending(id)
-	c.emit(events.RestartCancelled, cfg, "Delayed restart cancelled", map[string]string{"reason": pendingReasonText(p.Reason)})
-	return nil
-}
-
-func pendingReasonText(reason string) string {
-	if reason == server.PendingUpdate {
-		return "обновление"
+	if err := c.message(ctx, cfg, server.MsgRestartCancelled, nil, true); err != nil {
+		c.Logger.Warn("cancel not said in game", "server", id, "error", err)
 	}
-	return "по кнопке"
+	return nil
 }
 
 // dropPending ends a delayed restart, if there is one.
@@ -203,17 +198,17 @@ func (c *Controller) takePending(p server.PendingRestart) bool {
 // fresh is false for one resumed after a restart of the manager, whose first
 // message has gone out already.
 func (c *Controller) runPending(ctx context.Context, cfg server.Config, p server.PendingRestart, fresh bool) {
-	kind, vars := server.MsgManualRestart, map[string]string{}
+	// The countdown uses the scheduled restart's messages.
+	vars := map[string]string{}
 	if p.Reason == server.PendingUpdate {
-		kind, vars = server.MsgScheduledRestart, map[string]string{"reason": "обновление"}
+		vars["reason"] = "обновление"
 	}
 	delay := int(p.DueAt.Sub(p.CreatedAt).Round(time.Minute) / time.Minute)
 	if fresh && p.Reason == server.PendingManual {
 		// The operator's restart is announced at once with its full delay;
 		// an update's is announced by the update message.
-		online, err := c.online(ctx, cfg)
-		err = firstErr(err, c.message(ctx, cfg, kind, withVar(vars, "minutes", strconv.Itoa(delay)), err == nil && online > 0))
-		if c.warningResult(ctx, cfg, kind, err) != nil {
+		err := c.message(ctx, cfg, server.MsgDelayedRestart, map[string]string{"minutes": strconv.Itoa(delay)}, true)
+		if c.warningResult(ctx, cfg, server.MsgDelayedRestart, err) != nil {
 			return
 		}
 	}
@@ -223,7 +218,7 @@ func (c *Controller) runPending(ctx context.Context, cfg server.Config, p server
 			marks = append(marks, m)
 		}
 	}
-	if c.warnUntil(ctx, cfg, kind, vars, marks, p.DueAt) != nil {
+	if c.warnUntil(ctx, cfg, server.MsgScheduledRestart, vars, marks, p.DueAt) != nil {
 		return
 	}
 	if !c.takePending(p) {
@@ -280,15 +275,6 @@ func withVar(vars map[string]string, key, value string) map[string]string {
 	}
 	all[key] = value
 	return all
-}
-
-func firstErr(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // minutesUntil rounds the time left up to whole minutes, as players read it.

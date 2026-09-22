@@ -101,7 +101,11 @@ func (d *Dispatcher) deliver(ctx context.Context, c Channel, e events.Event) err
 	case KindHTTP:
 		return s.sendHTTP(ctx, c, summarize(e, c.Language))
 	}
-	return s.send(ctx, c.secret.URL, format(e, c))
+	body, err := discordBody(e, c)
+	if err != nil {
+		return err
+	}
+	return s.post(ctx, c.secret.URL, body)
 }
 
 // Test sends a sample notice to one channel and reports the outcome directly,

@@ -18,9 +18,11 @@ type Category struct {
 // kindEvents are the events that carry each message kind.
 var kindEvents = map[string][]events.Type{
 	server.MsgScheduledRestart: {events.RestartWarning},
+	server.MsgDelayedRestart:   {events.RestartDelayed},
+	server.MsgRestartCancelled: {events.RestartCancelled},
 	server.MsgUpdate:           {events.UpdateAvailable},
 	server.MsgStarted:          {events.ServerReady},
-	server.MsgManualRestart:    {events.RestartManual, events.RestartCancelled},
+	server.MsgManualRestart:    {events.RestartManual},
 	server.MsgManualStop:       {events.StopManual},
 	server.MsgCrash:            {events.ServerCrashed},
 	server.MsgTechnical:        {events.ServerRestarting, events.ServerHang},

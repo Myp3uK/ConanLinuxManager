@@ -11,6 +11,8 @@ import (
 // go to the channels that take them.
 const (
 	MsgScheduledRestart = "scheduled_restart"
+	MsgDelayedRestart   = "delayed_restart"
+	MsgRestartCancelled = "restart_cancelled"
 	MsgUpdate           = "update"
 	MsgStarted          = "started"
 	MsgManualRestart    = "manual_restart"
@@ -44,8 +46,14 @@ type MessageKind struct {
 // MessageKinds lists every kind with its default, in the form's order.
 var MessageKinds = []MessageKind{
 	{Key: MsgScheduledRestart, Group: "players", Title: "Рестарт по расписанию", Game: true, Vars: "{minutes} {name} {reason}",
-		Help: "Уходит за каждый интервал предупреждений до планового рестарта или остановки, и до рестарта ради найденного обновления. Рестарт - ровно в назначенное время. {reason} - «обновление» у рестарта ради обновления, у планового пусто.",
+		Help: "Уходит за каждый интервал предупреждений до планового рестарта или остановки и до отложенного рестарта (по кнопке или ради обновления). Рестарт - ровно в назначенное время. {reason} - «обновление» у рестарта ради обновления, у остальных пусто.",
 		Def:  Message{Text: "Плановый рестарт сервера через {minutes} мин.", Game: true, Discord: true}},
+	{Key: MsgDelayedRestart, Group: "players", Title: "Отложенный рестарт", Game: true, Vars: "{minutes} {name}",
+		Help: "Кнопка «Отложенный рестарт»: уходит сразу, с полным сроком. Дальше отсчёт идёт сообщением «Рестарт по расписанию».",
+		Def:  Message{Text: "Технический рестарт через {minutes} мин.", Game: true, Discord: true}},
+	{Key: MsgRestartCancelled, Group: "players", Title: "Отмена отложенного рестарта", Game: true, Vars: "{name}",
+		Help: "Отложенный рестарт отменён кнопкой «Отменить рестарт».",
+		Def:  Message{Text: "Технический рестарт отменён.", Game: true, Discord: true}},
 	{Key: MsgUpdate, Group: "players", Title: "Найдено обновление", Game: true, Vars: "{target} {version} {minutes} {name}",
 		Help: "Один раз, когда в Steam вышла новая сборка. С автообновлением и запущенным сервером менеджер тут же ставит отложенный рестарт, и {minutes} - сколько до него; если плановый рестарт наступит раньше, обновление ставится при нём, и {minutes} - сколько до планового. Дальше отсчёт идёт сообщением «Рестарт по расписанию». {target} - «игры» или «мода», {version} - сборка или список модов.",
 		Def:  Message{Text: "Найдено обновление {target}: {version}.[ Сервер будет обновлён через {minutes} мин.]", Game: true, Discord: true}},
@@ -53,10 +61,10 @@ var MessageKinds = []MessageKind{
 		Help: "Сервер загрузился и пускает игроков. Только в Discord: в игре в этот момент ещё никого нет.",
 		Def:  Message{Text: "Сервер {name} запущен и ждёт игроков.", Discord: true}},
 	{Key: MsgManualRestart, Group: "players", Title: "Рестарт по кнопке", Game: true, Vars: "{minutes} {name}",
-		Help: "Кнопка «Рестарт»: с галочкой «предупредить» - за каждый интервал, без неё - один раз перед рестартом. Кнопка «Рестарт через N мин» - сразу с полным сроком, потом за каждый интервал, рестарт ровно в срок.",
+		Help: "Кнопка «Рестарт»: один раз, и сервер сразу перезапускается.",
 		Def:  Message{Text: "Администратор перезапускает сервер[ через {minutes} мин.]", Game: true, Discord: true}},
 	{Key: MsgManualStop, Group: "players", Title: "Остановка по кнопке", Game: true, Vars: "{minutes} {name}",
-		Help: "Кнопка «Остановить». С галочкой «предупредить» - за каждый интервал, без неё - один раз перед остановкой.",
+		Help: "Кнопка «Остановить»: один раз, и сервер сразу останавливается. Кнопка «Убить» шлёт это же сообщение, но только в Discord: зависший сервер его уже не покажет.",
 		Def:  Message{Text: "Администратор выключает сервер[ через {minutes} мин.]", Game: true, Discord: true}},
 	{Key: MsgCrash, Group: "admins", Title: "Сервер упал", Vars: "{name} {reason}",
 		Help: "Процесс завершился сам. К сообщению прикладываются строки из лога игры с ошибкой. Упоминание роли ставится к этому и следующим двум.",

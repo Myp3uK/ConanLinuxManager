@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -25,6 +24,8 @@ type notice struct {
 	Server   string
 	ServerID string
 	Text     string
+	// Announce is the server's own text for the event, if it has one.
+	Announce string
 	Fields   []noticeField
 	Event    string
 	Kind     string
@@ -54,6 +55,7 @@ func summarize(e events.Event, language string) notice {
 	// A server's own text for the event is the message itself, not a field.
 	if text := e.Details["announce"]; text != "" {
 		lines = append(lines, text)
+		n.Announce = text
 	}
 	n.Text = strings.Join(lines, "\n")
 	keys := make([]string, 0, len(e.Details))
@@ -77,34 +79,25 @@ func summarize(e events.Event, language string) notice {
 	return n
 }
 
+// plain is the notice as one text: the server's message where the event has
+// one, which is what the operator wrote for it, else the title and what the
+// event says.
+func (n notice) plain() string {
+	if n.Announce != "" {
+		return n.Announce
+	}
+	if n.Text != "" {
+		return n.Title + "\n" + n.Text
+	}
+	return n.Title
+}
+
 // ----- Telegram -----
 
 const telegramAPI = "https://api.telegram.org"
 
-// telegramText is a notice as Telegram HTML: the title in bold, the server,
-// the message, and the fields, long ones as preformatted text.
-func telegramText(n notice) string {
-	var b strings.Builder
-	b.WriteString("<b>" + html.EscapeString(n.Title) + "</b>")
-	if n.Server != "" {
-		b.WriteString("\n<i>" + html.EscapeString(n.Server) + "</i>")
-	}
-	if n.Text != "" {
-		b.WriteString("\n" + html.EscapeString(limit(n.Text, 1500)))
-	}
-	for _, f := range n.Fields {
-		if len(f.Value) < 40 {
-			b.WriteString("\n<b>" + html.EscapeString(f.Name) + ":</b> " + html.EscapeString(f.Value))
-		} else {
-			b.WriteString("\n<b>" + html.EscapeString(f.Name) + ":</b>\n<pre>" + html.EscapeString(limit(f.Value, 900)) + "</pre>")
-		}
-	}
-	return b.String()
-}
-
 func (s sender) sendTelegram(ctx context.Context, c Channel, n notice) error {
-	message := map[string]any{"chat_id": c.Settings.ChatID, "text": telegramText(n), "parse_mode": "HTML",
-		"disable_web_page_preview": true}
+	message := map[string]any{"chat_id": c.Settings.ChatID, "text": limit(n.plain(), 4000), "disable_web_page_preview": true}
 	if c.Settings.ThreadID > 0 {
 		message["message_thread_id"] = c.Settings.ThreadID
 	}
@@ -137,22 +130,20 @@ const DefaultBody = `{
   "details": {details}
 }`
 
-var bodyPlaceholder = regexp.MustCompile(`\{(event|kind|severity|server|server_id|title|text|time|details)\}`)
+var bodyPlaceholder = regexp.MustCompile(`\{(event|kind|severity|server|server_id|title|text|time|details|log|mention)\}`)
 
 // values are what the placeholders of an HTTP channel stand for. text is
 // the server's message where there is one, else the title.
 func (n notice) values() map[string]string {
-	text := n.Text
-	if text == "" {
-		text = n.Title
-	}
+	text := n.plain()
 	details := map[string]string{}
 	for _, f := range n.Fields {
 		details[f.Key] = f.Value
 	}
 	raw, _ := json.Marshal(details)
 	return map[string]string{"event": n.Event, "kind": n.Kind, "severity": n.Severity, "server": n.Server,
-		"server_id": n.ServerID, "title": n.Title, "text": text, "time": n.Time.Format(time.RFC3339), "details": string(raw)}
+		"server_id": n.ServerID, "title": n.Title, "text": text, "time": n.Time.Format(time.RFC3339), "details": string(raw),
+		"log": details["log"], "mention": ""}
 }
 
 // fill puts the values into a template, each escaped as where it goes: a
@@ -208,10 +199,19 @@ func (c *Channel) validateHTTP() error {
 	if u.User != nil {
 		return fmt.Errorf("put credentials in a header, not in the url")
 	}
-	if s.ContentType == "application/json" && strings.TrimSpace(s.Body) != "" && s.Method != "GET" {
-		if sample := fill(s.Body, sampleNotice().values(), s.ContentType); !json.Valid([]byte(sample)) {
-			return fmt.Errorf("the body template does not make valid JSON; write placeholders inside quotes, as \"{text}\", except {details}")
-		}
+	if s.ContentType == "application/json" && s.Method != "GET" {
+		return validJSONTemplate(s.Body)
+	}
+	return nil
+}
+
+// validJSONTemplate checks that a JSON body template stays JSON once filled.
+func validJSONTemplate(body string) error {
+	if strings.TrimSpace(body) == "" {
+		return nil
+	}
+	if sample := fill(body, sampleNotice().values(), "application/json"); !json.Valid([]byte(sample)) {
+		return fmt.Errorf("the body template does not make valid JSON; write placeholders inside quotes, as \"{text}\", except {details}")
 	}
 	return nil
 }

@@ -112,14 +112,22 @@ function ask(text, { ok = 'Да', danger = true, extra = [], cancel = true } = {
   cancelButton.style.display = cancel ? '' : 'none';
   return new Promise(resolve => {
     const done = value => {
-      okButton.onclick = cancelButton.onclick = dialog.oncancel = null;
+      okButton.onclick = cancelButton.onclick = dialog.oncancel = dialog.onkeydown = null;
       dialog.close();
       resolve(value);
     };
     okButton.onclick = () => done(true);
     cancelButton.onclick = () => done(false);
     dialog.oncancel = () => done(false);
+    // Enter confirms, wherever the focus is, except in a text area; Escape
+    // cancels, as a dialog does anyway.
+    dialog.onkeydown = e => {
+      if (e.key !== 'Enter' || e.isComposing || e.target.tagName === 'TEXTAREA') return;
+      e.preventDefault();
+      done(e.target === cancelButton ? false : true);
+    };
     dialog.showModal();
+    okButton.focus();
   });
 }
 
@@ -156,11 +164,17 @@ function fmtBytes(n) {
 }
 
 const STATES = {
-  idle: ['Остановлен', ''], starting: ['Запускается', 'warn'], running: ['Работает', 'ok'],
+  idle: ['Остановлен', ''], starting: ['Запускается', 'warn'], loading: ['Загружается', 'warn'], running: ['Работает', 'ok'],
   stopping: ['Останавливается', 'warn'], flushing: ['Сохраняет', 'warn'], installing: ['Устанавливается', 'warn'],
   configuring: ['Настраивается', 'warn'], verifying: ['Проверка базы', 'warn'], restoring: ['Восстановление', 'warn'],
   deleting: ['Удаляется', 'warn'], recovery_required: ['Нужно восстановление', 'bad'],
 };
+// shownState is the state as players see it: a running server is still
+// starting until the game reports it has loaded.
+function shownState(d) {
+  const state = d.lifecycle.state;
+  return state === 'running' && d.health && d.health.ready === false ? 'loading' : state;
+}
 function stateBadge(state) {
   const [label, kind] = STATES[state] || [state || '-', ''];
   return h('span', { class: 'badge ' + kind, text: label });
@@ -230,11 +244,13 @@ function showTip(el) {
   const left = Math.min(Math.max(8, center - t.width / 2), document.documentElement.clientWidth - t.width - 8);
   const top = side === 'top' ? r.top - t.height - 9 : r.bottom + 9;
   tooltip.dataset.side = side;
-  tooltip.style.left = (left + scrollX) + 'px';
-  tooltip.style.top = (top + scrollY) + 'px';
+  tooltip.style.left = left + 'px';
+  tooltip.style.top = top + 'px';
   tooltip.style.setProperty('--arrow-x', Math.min(Math.max(10, center - left), t.width - 10) + 'px');
 }
 function hideTip() { tipOwner = null; tooltip.classList.remove('visible'); }
+// A page change removes the element a tooltip was for without a mouseout.
+window.addEventListener('hashchange', hideTip);
 document.addEventListener('mouseover', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el && el !== tipOwner) showTip(el); else if (!el && tipOwner) hideTip(); });
 document.addEventListener('focusin', e => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el) showTip(el); });
 document.addEventListener('focusout', hideTip);
@@ -298,7 +314,6 @@ function actionButtons(detail, refresh) {
   const state = detail.lifecycle.state;
   const running = state === 'running';
   const steps = (detail.server.warnings && detail.server.warnings.steps) || [];
-  const warnings = steps.length;
   const start = h('button', { class: 'primary', text: 'Запустить', disabled: state !== 'idle',
     onclick: e => act(e.target, async () => {
       const r = await api('POST', `/servers/${enc(id)}/start`);
@@ -307,40 +322,36 @@ function actionButtons(detail, refresh) {
     }) });
   const stop = h('button', { text: 'Остановить', disabled: !running,
     onclick: e => act(e.target, async () => {
-      const warn = h('input', { type: 'checkbox', checked: !!warnings, disabled: !warnings });
-      const label = h('label', { class: 'row' }, warn, warnings ? 'Предупредить игроков (за ' + steps.map(x => x.minutes).sort((a, b) => b - a).join(', ') + ' мин., если кто-то онлайн)' : 'Интервалы предупреждений не заданы - одно сообщение перед остановкой');
-      if (!await ask(`Остановить «${detail.server.name}»? Игра сохранит мир; если не выйдет за 5 минут, процесс будет убит и база проверена.`, { ok: 'Остановить', extra: [label] })) return;
-      const job = await api('POST', `/servers/${enc(id)}/stop`, { warn: warn.checked });
+      if (!await ask(`Остановить «${detail.server.name}» сейчас? Игроки получат «Остановка по кнопке»; игра сохранит мир, а если не выйдет за 5 минут, процесс будет убит и база проверена.`, { ok: 'Остановить' })) return;
+      const job = await api('POST', `/servers/${enc(id)}/stop`, { warn: false });
       refresh(); await runJob(job); refresh();
     }) });
   const restart = h('button', { text: 'Рестарт', disabled: !running,
     onclick: e => act(e.target, async () => {
-      const warn = h('input', { type: 'checkbox', checked: !!warnings, disabled: !warnings });
-      const label = h('label', { class: 'row' }, warn, warnings ? 'Предупредить игроков (за ' + steps.map(x => x.minutes).sort((a, b) => b - a).join(', ') + ' мин., если кто-то онлайн)' : 'Предупреждения не настроены');
-      if (!await ask(`Перезапустить «${detail.server.name}»?`, { ok: 'Перезапустить', extra: [label] })) return;
-      const job = await api('POST', `/servers/${enc(id)}/restart`, { warn: warn.checked });
+      if (!await ask(`Перезапустить «${detail.server.name}» сейчас? Игроки получат «Рестарт по кнопке».`, { ok: 'Перезапустить' })) return;
+      const job = await api('POST', `/servers/${enc(id)}/restart`, { warn: false });
       refresh(); await runJob(job); refresh();
     }) });
   const delay = (detail.server.warnings && detail.server.warnings.delay_minutes) || 15;
   const pending = detail.pending;
   const later = pending
-    ? h('button', { class: 'primary', text: 'Отменить рестарт', title: (pending.reason === 'update' ? 'Рестарт ради обновления' : 'Отложенный рестарт') + ' в ' + fmtTime(pending.due_at),
+    ? h('button', { class: 'primary', text: 'Отменить рестарт', title: (pending.reason === 'update' ? 'Рестарт ради обновления' : 'Отложенный рестарт') + ' в ' + fmtClock(pending.due_at),
       onclick: e => act(e.target, async () => {
         const why = pending.reason === 'update' ? ' Обновление тогда поставится при следующем рестарте.' : '';
-        if (!await ask(`Отменить рестарт «${detail.server.name}» в ${fmtTime(pending.due_at)}? Игрокам об отмене не сообщается.` + why, { ok: 'Отменить рестарт' })) return;
+        if (!await ask(`Отменить рестарт «${detail.server.name}» в ${fmtClock(pending.due_at)}? Игроки получат «Отмена отложенного рестарта».` + why, { ok: 'Отменить рестарт' })) return;
         await api('DELETE', `/servers/${enc(id)}/delayed-restart`); toast('Отложенный рестарт отменён'); refresh();
       }) })
-    : h('button', { text: `Рестарт через ${delay} мин`, disabled: !running,
+    : h('button', { text: 'Отложенный рестарт', title: `Рестарт через ${delay} мин с отсчётом`, disabled: !running,
       onclick: e => act(e.target, async () => {
         const at = new Date(Date.now() + delay * 60000);
         const marks = steps.map(x => x.minutes).filter(m => m < delay).sort((a, b) => b - a);
         const plan = detail.planned;
         if (plan && plan.source === 'schedule' && new Date(plan.at) <= at) {
-          toast(`Плановый ${plan.action === 'stop' ? 'стоп' : 'рестарт'} раньше - в ${fmtTime(plan.at)}`, 'bad'); return;
+          toast(`Плановый ${plan.action === 'stop' ? 'стоп' : 'рестарт'} раньше - в ${fmtClock(plan.at)}`, 'bad'); return;
         }
-        if (!await ask(`Перезапустить «${detail.server.name}» в ${fmtTime(at)}? Игроки сразу получат «Рестарт по кнопке» с ${delay} мин.` +
-          (marks.length ? `, затем за ${marks.join(', ')} мин.` : '.') + ' Рестарт - ровно в срок, даже если никого нет.', { ok: 'Поставить', danger: false })) return;
-        await api('POST', `/servers/${enc(id)}/delayed-restart`); toast(`Рестарт в ${fmtTime(at)}`); refresh();
+        if (!await ask(`Перезапустить «${detail.server.name}» в ${fmtClock(at)}, через ${delay} мин? Сразу уйдёт «Отложенный рестарт» с ${delay} мин.` +
+          (marks.length ? `, затем «Рестарт по расписанию» за ${marks.join(', ')} мин.` : '') + ' Рестарт - ровно в срок.', { ok: 'Поставить', danger: false })) return;
+        await api('POST', `/servers/${enc(id)}/delayed-restart`); toast(`Рестарт в ${fmtClock(at)}`); refresh();
       }) });
   const kill = h('button', { class: 'danger', text: 'Убить', disabled: !(running || state === 'stopping'),
     onclick: e => act(e.target, async () => {
@@ -375,7 +386,7 @@ function sparkline(values, max) {
   return svg;
 }
 
-function fmtTime(at) {
+function fmtClock(at) {
   return new Date(at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -416,7 +427,7 @@ function statsPanel(d) {
       const at = new Date(plan.at);
       const today = at.toDateString() === new Date().toDateString();
       const label = plan.source === 'update' ? 'Рестарт: обновление' : plan.source === 'manual' ? 'Отложенный рестарт' : plan.action === 'stop' ? 'След. остановка' : 'След. рестарт';
-      tiles.push(tile(label, (today ? '' : at.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' ') + fmtTime(at),
+      tiles.push(tile(label, (today ? '' : at.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + ' ') + fmtClock(at),
         h('span', { class: 'countdown', 'data-at': plan.at, text: countdownText(plan.at) }), null,
         plan.source === 'schedule' ? null : 'Отменить - кнопкой «Отменить рестарт» вверху.'));
     }
@@ -484,7 +495,7 @@ async function viewServers() {
       const s = d.server, state = d.lifecycle.state;
       return h('div', { class: 'card' },
         h('div', { class: 'title' }, h('a', { href: `#/server/${enc(s.id)}`, text: s.name }), h('span', { class: 'muted small mono', text: s.id }),
-          h('span', { class: 'spacer' }), stateBadge(state)),
+          h('span', { class: 'spacer' }), stateBadge(shownState(d))),
         s.recovery_reason ? h('div', { class: 'notice bad small', text: 'Запуск заблокирован: ' + s.recovery_reason }) : null,
         d.lifecycle.error ? h('div', { class: 'notice bad small', text: d.lifecycle.error }) : null,
         facts([
@@ -727,7 +738,7 @@ async function viewServer(id, tab) {
       }
       const d = ctx.detail;
       replace(headBox, h('a', { href: '#/', text: '← Серверы' }), h('h1', { text: d.server.name }),
-        h('span', { class: 'muted mono small', text: d.server.id }), stateBadge(d.lifecycle.state),
+        h('span', { class: 'muted mono small', text: d.server.id }), stateBadge(shownState(d)),
         h('span', { class: 'spacer' }), actionButtons(d, ctx.refresh));
       if (ctx.onRefresh) ctx.onRefresh(d);
       return true;
@@ -766,7 +777,7 @@ const TAB_VIEWS = {
           }) }),
           h('a', { href: `#/server/${enc(s.id)}/backups`, text: 'Восстановить из бэкапа' }))) : null);
       replace(resources, statsPanel(d));
-      replace(info, h('h2', { class: 'row' }, 'Состояние', stateBadge(d.lifecycle.state)), facts([
+      replace(info, h('h2', { class: 'row' }, 'Состояние', stateBadge(shownState(d))), facts([
         d.lifecycle.error && ['Ошибка', d.lifecycle.error],
         ['Процесс', p.pid ? `PID ${p.pid}, запущен ${fmtTime(p.started_at)}` : '-'],
         [h('span', { class: 'row', style: 'gap:6px' }, 'Виден игрокам', helpIcon('Менеджер раз в 15 секунд опрашивает query-порт сервера - так же, как список серверов в игре.\n«Отвечает» - сервер загрузился и виден игрокам.\nСостояние в заголовке - это процесс: запущен он или нет. Процесс может работать, но не отвечать: пока мир грузится или если сервер завис. Долгое молчание работающего сервера - признак зомби.')), h('span', {}, availabilityBadge(a), a.checked_at && isSet(a.checked_at) ? h('span', { class: 'muted small', text: '  проверено ' + fmtAgo(a.checked_at) }) : null)],
@@ -1217,10 +1228,10 @@ const TAB_VIEWS = {
           field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 - как в игре. Пишется в Game.ini перед стартом; каждый бэкап копирует базу целиком.'))),
       gameBox,
       h('div', { class: 'panel' }, h('h2', { text: 'Оповещения' }),
-        h('p', { class: 'muted small' }, 'В игру - через RCON (нужен включённый RCON в «Настройках игры»), только если кто-то онлайн. В Discord, Telegram и на свои адреса - в каналы, которые берут это сообщение (страница ', h('a', { href: '#/notifications', text: 'Уведомления' }), '). Эмодзи и коды вида :warning: остаются только там: в игру текст уходит без них - шрифт игры их не рисует.'),
+        h('p', { class: 'muted small' }, 'В игру - через RCON (нужен включённый RCON в «Настройках игры»), всегда, даже если никого нет. В Discord, Telegram и на свои адреса - в каналы, которые берут это сообщение (страница ', h('a', { href: '#/notifications', text: 'Уведомления' }), '). Эмодзи и коды вида :warning: остаются только там: в игру текст уходит без них - шрифт игры их не рисует.'),
         h('div', { class: 'form' },
-          field('Предупреждать за', marksBox, 'Интервалы отсчёта. Плановый и отложенный рестарт - ровно в назначенное время, предупреждения уходят заранее, есть кто онлайн или нет. Рестарт и остановка по кнопке с галочкой «предупредить» начинают отсчёт сразу и не ждут, если на сервере никого нет.\nПусто - без отсчёта.'),
-          field('Отложенный рестарт через, мин', delayInput, 'Кнопка «Рестарт через N мин» и рестарт ради найденного обновления ставятся на столько минут вперёд. Если плановый рестарт наступит раньше, обновление ставится при нём, а кнопка откажет.'),
+          field('Предупреждать за', marksBox, 'Интервалы отсчёта перед плановым и отложенным рестартом: сообщение «Рестарт по расписанию» уходит за каждый интервал, рестарт - ровно в назначенное время.\nКнопки «Рестарт» и «Остановить» действуют сразу, без отсчёта.\nПусто - без отсчёта.'),
+          field('Отложенный рестарт через, мин', delayInput, 'Кнопка «Отложенный рестарт» и рестарт ради найденного обновления ставятся на столько минут вперёд. Если плановый рестарт наступит раньше, обновление ставится при нём, а кнопка откажет.'),
           field('RCON-команда объявления', warnCommand, 'У Conan это broadcast.')),
         h('h3', { text: 'Для игроков' }),
         h('div', { class: 'msg-grid' }, kinds.map((k, i) => k.group === 'players' ? msgRows[i] : null)),
@@ -1340,9 +1351,12 @@ async function viewNotifications() {
     if (kind === 'discord') {
       const url = h('input', { class: 'mono secret', placeholder: keep || 'https://discord.com/api/webhooks/...', autocomplete: 'off' });
       const mention = h('input', { class: 'mono', value: c.mention || '', placeholder: '<@&123456789012345678>' });
+      const json = h('textarea', { class: 'mono', rows: 6, spellcheck: 'false', placeholder: '{"content": "{text}"}' });
+      json.value = st.body || '';
       where = [field('Webhook URL', url, 'В Discord: настройки канала → Интеграции → Вебхуки → Новый вебхук → «Копировать URL веб-хука».\nАдрес хранится зашифрованным и дальше показывается замаскированным.')];
       extra = [field('Упоминание при падении', mention, 'Кого позвать, когда сервер упал или нужно вмешательство. К сообщениям для игроков упоминание не ставится.\nРоль: <@&ID роли>, человек: <@ID>, или @here.\nID роли: Discord → Настройки сервера → Роли → ПКМ по роли → «Копировать ID» (нужен режим разработчика).')];
-      collect = body => { if (url.value.trim()) body.webhook_url = url.value.trim(); body.mention = mention.value.trim(); };
+      extra.push(field('Свой JSON', json, 'Пусто - в канал уходит только текст сообщения из настроек сервера («Настройки» → «Оповещения»).\nСвой JSON - тело запроса к вебхуку целиком, например с embeds: {"content": "{mention} {text}", "embeds": [{"title": "{server}", "description": "{log}"}]}.\nПеременные: {text}, {title}, {server}, {server_id}, {event}, {kind}, {severity}, {time}, {mention} - упоминание (только у ошибок), {log} - строки из лога игры при падении, {details} - все поля объектом. Переменные пишутся внутри кавычек, кроме {details}.'));
+      collect = body => { if (url.value.trim()) body.webhook_url = url.value.trim(); body.mention = mention.value.trim(); body.settings = { body: json.value }; };
     } else if (kind === 'telegram') {
       const token = h('input', { class: 'mono secret', placeholder: keep || '123456789:AA...', autocomplete: 'off' });
       const chat = h('input', { class: 'mono', value: st.chat_id || '', placeholder: '-1001234567890 или @channel' });
@@ -1365,7 +1379,7 @@ async function viewNotifications() {
       const headers = h('textarea', { class: 'mono secret-area', rows: 3, spellcheck: 'false', placeholder: (c.headers && c.headers.length ? 'Сохранены: ' + c.headers.join(', ') + '. ' + keep : 'Authorization: Bearer ...\nX-Api-Key: ...') });
       const clearHeaders = h('input', { type: 'checkbox' });
       const allowPrivate = h('input', { type: 'checkbox', checked: !!st.allow_private });
-      const vars = 'Переменные: {text} - текст сообщения, {title} - заголовок, {server} - имя сервера, {server_id}, {event} - тип события (server.crashed…), {kind} - вид сообщения (crash, update…), {severity} - info / warning / error, {time} - время UTC, {details} - все поля события объектом JSON.';
+      const vars = 'Переменные: {text} - текст сообщения, {title} - заголовок, {server} - имя сервера, {server_id}, {event} - тип события (server.crashed…), {kind} - вид сообщения (crash, update…), {severity} - info / warning / error, {time} - время UTC, {log} - строки из лога игры при падении, {details} - все поля события объектом JSON.';
       where = [
         field('Адрес', url, 'http:// или https://. В адресе тоже можно ставить переменные, например ?text={text} - они кодируются для URL.\nХранится зашифрованным: в адресе часто ключ.'),
         field('Метод', method, 'GET и DELETE - без тела: всё нужное передавайте в адресе.'),
@@ -1404,7 +1418,7 @@ async function viewNotifications() {
       h('div', { class: 'category-groups' }, columns),
       h('h3', { text: '3. Оформление' }),
       h('div', { class: 'form' }, extra,
-        field('Язык сообщений', language, 'Язык заголовков и названий полей. Тексты сообщений - те, что заданы у сервера.'),
+        field('Язык сообщений', language, 'Язык заголовков событий без своего текста (например, «Бэкап готов»). Тексты оповещений - те, что заданы у сервера.'),
         field('Включён', enabled)),
       h('div', { class: 'row end', style: 'margin-top:14px' },
         h('button', { class: 'ghost', text: 'Отмена', onclick: () => replace(formBox) }),

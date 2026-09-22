@@ -609,6 +609,19 @@ func (c *Controller) Stop(ctx context.Context, id string) error {
 	return nil
 }
 
+// KillByOperator is the operator's kill: the server is ended at once and
+// the channels get the operator's stop message. Only there: a server that
+// has to be killed is rarely able to show anything in the game.
+func (c *Controller) KillByOperator(ctx context.Context, id string) error {
+	if err := c.Kill(ctx, id); err != nil {
+		return err
+	}
+	if cfg, err := c.Repo.Get(ctx, id); err == nil {
+		_ = c.message(ctx, cfg, server.MsgManualStop, nil, false)
+	}
+	return nil
+}
+
 // Kill ends a server that is not responding to a normal stop. The world keeps
 // only what the game had already saved.
 func (c *Controller) Kill(ctx context.Context, id string) error {

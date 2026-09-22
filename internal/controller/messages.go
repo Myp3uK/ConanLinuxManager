@@ -11,6 +11,8 @@ import (
 // messageEvent is the event that carries each announced kind to Discord.
 var messageEvent = map[string]events.Type{
 	server.MsgScheduledRestart: events.RestartWarning,
+	server.MsgDelayedRestart:   events.RestartDelayed,
+	server.MsgRestartCancelled: events.RestartCancelled,
 	server.MsgUpdate:           events.UpdateAvailable,
 	server.MsgManualRestart:    events.RestartManual,
 	server.MsgManualStop:       events.StopManual,

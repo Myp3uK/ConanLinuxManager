@@ -124,15 +124,13 @@ func TestChannelFilters(t *testing.T) {
 func TestMentionsAreExplicitAndOnlyForErrors(t *testing.T) {
 	c := Channel{Language: "ru", Mention: "<@&987654321098765>"}
 	info := format(events.Event{Type: events.ServerReady, Severity: events.Info, Message: "@everyone hello"}, c)
-	if info.Content != "" || len(info.AllowedMentions.Parse) != 0 || len(info.AllowedMentions.Roles) != 0 {
+	if strings.Contains(info.Content, c.Mention) || len(info.AllowedMentions.Parse) != 0 || len(info.AllowedMentions.Roles) != 0 {
 		t.Fatalf("info notice may ping: %+v", info)
 	}
-	crash := format(events.Event{Type: events.ServerCrashed, Severity: events.Error, ServerName: "PvP", Details: map[string]string{"exit": "signal SIGSEGV"}}, c)
-	if crash.Content != c.Mention || len(crash.AllowedMentions.Roles) != 1 || crash.AllowedMentions.Roles[0] != "987654321098765" {
+	crash := format(events.Event{Type: events.ServerCrashed, Severity: events.Error, ServerName: "PvP",
+		Details: map[string]string{"exit": "signal SIGSEGV", "announce": "Сервер PvP упал."}}, c)
+	if crash.Content != c.Mention+" Сервер PvP упал." || len(crash.AllowedMentions.Roles) != 1 || crash.AllowedMentions.Roles[0] != "987654321098765" {
 		t.Fatalf("error notice mention: %+v", crash)
-	}
-	if crash.Embeds[0].Title != "🔴 Сервер упал" || crash.Embeds[0].Fields[0].Name != "Выход" {
-		t.Fatalf("russian formatting: %+v", crash.Embeds[0])
 	}
 }
 
@@ -216,7 +214,7 @@ func TestDispatcherDeliversToMatchingChannelsAndRecordsResult(t *testing.T) {
 	fake := &fakeDiscord{}
 	d := NewDispatcher(repo, slogDiscard())
 	d.sender.client = &http.Client{Transport: fake}
-	d.Handle(events.Event{Type: events.ServerReady, Severity: events.Info, ServerID: "a", ServerName: "PvE", Time: time.Now()})
+	d.Handle(events.Event{Type: events.ServerReady, Severity: events.Info, ServerID: "a", ServerName: "PvE", Time: time.Now(), Details: map[string]string{"announce": "PvE запущен"}})
 	if len(fake.bodies) != 1 || !strings.Contains(fake.bodies[0], "PvE") {
 		t.Fatalf("deliveries: %v", fake.bodies)
 	}
@@ -244,14 +242,46 @@ func TestProxyMustBeAUsableURL(t *testing.T) {
 	}
 }
 
-// A server's own text is the message of the notice, not one of its fields.
+// A server's own text is the whole message: no embed, no fields.
 func TestServerTextIsTheMessage(t *testing.T) {
 	c := Channel{Language: "ru"}
-	p := format(events.Event{Type: events.ServerReady, Severity: events.Info, ServerName: "PvE",
-		Details: map[string]string{"announce": "Сервер готов, заходите!"}}, c)
-	e := p.Embeds[0]
-	if e.Description != "**PvE**\nСервер готов, заходите!" || len(e.Fields) != 0 {
-		t.Fatalf("%+v", e)
+	body, _ := discordBody(events.Event{Type: events.ServerReady, Severity: events.Info, ServerName: "PvE",
+		Details: map[string]string{"announce": "Сервер готов, заходите!", "kind": "started"}}, c)
+	var sent map[string]any
+	_ = json.Unmarshal(body, &sent)
+	if sent["content"] != "Сервер готов, заходите!" || sent["embeds"] != nil {
+		t.Fatalf("%s", body)
+	}
+	// Without a text of its own, the event's title says what happened.
+	killed := format(events.Event{Type: events.ServerKilled, Severity: events.Warning, Message: "Killed by the operator"}, c)
+	if killed.Content != "💀 Сервер принудительно убит\nKilled by the operator" {
+		t.Fatalf("%q", killed.Content)
+	}
+}
+
+// A Discord channel with its own JSON posts that, filled in.
+func TestDiscordJSONTemplate(t *testing.T) {
+	repo, _ := testRepo(t)
+	ctx := context.Background()
+	if _, err := repo.Create(ctx, Input{Name: str("x"), WebhookURL: str(webhook), Settings: &Settings{Body: `{"content": {text}}`}}); err == nil {
+		t.Fatal("accepted a template that is not JSON")
+	}
+	c, err := repo.Create(ctx, Input{Name: str("x"), WebhookURL: str(webhook), Mention: str("@here"),
+		Settings: &Settings{Body: `{"content": "{mention} **{server}**: {text}", "embeds": [{"description": "{log}"}]}`, ChatID: "ignored"}})
+	if err != nil || c.Settings.ChatID != "" {
+		t.Fatalf("%+v %v", c.Settings, err)
+	}
+	c, _ = repo.get(ctx, c.ID)
+	body, _ := discordBody(events.Event{Type: events.ServerCrashed, Severity: events.Error, ServerName: "PvE \"1\"",
+		Details: map[string]string{"announce": "Упал", "log": "line1\nline2"}}, c)
+	var sent struct {
+		Content string `json:"content"`
+		Embeds  []struct {
+			Description string `json:"description"`
+		} `json:"embeds"`
+	}
+	if err := json.Unmarshal(body, &sent); err != nil || sent.Content != "@here **PvE \"1\"**: Упал" || sent.Embeds[0].Description != "line1\nline2" {
+		t.Fatalf("%s %v", body, err)
 	}
 }
 

@@ -362,11 +362,7 @@ func (c *Controller) updateSoon(ctx context.Context, cfg server.Config, build st
 
 // announceUpdate says the update message, in the game if anyone is there.
 func (c *Controller) announceUpdate(ctx context.Context, cfg server.Config, vars map[string]string, running bool) {
-	online := 0
-	if running {
-		online, _ = c.online(ctx, cfg)
-	}
-	if err := c.message(ctx, cfg, server.MsgUpdate, vars, online > 0); err != nil {
+	if err := c.message(ctx, cfg, server.MsgUpdate, vars, running); err != nil {
 		c.Logger.Warn("update announcement not said in game", "server", cfg.ID, "error", err)
 	}
 }

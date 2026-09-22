@@ -9,27 +9,24 @@ import (
 	"github.com/example/conan-manager/internal/server"
 )
 
+// Every message of a kind that goes to the game is said there, whether
+// anyone is online or not: someone may join a second later, and the
+// operator wants to see it in the chat log.
+
 // warnPlayers announces an operator's restart or stop, or an update, as the
 // message kind says, and returns when the server may go down. With countdown
 // it says the message at each warning mark while anyone is online and returns
-// early once nobody is; without, or when nobody is online from the start, it
-// says the message once, without minutes. It never fails the action: a
-// server that cannot be reached over RCON goes down as it would without
-// warnings.
+// early once nobody is; without, it says the message once, without minutes.
+// It never fails the action: a server that cannot be reached over RCON goes
+// down as it would without warnings.
 func (c *Controller) warnPlayers(ctx context.Context, cfg server.Config, kind string, vars map[string]string, countdown bool) error {
-	count := func() (int, error) {
-		players, err := c.Players(ctx, cfg.ID, true)
-		return len(players), err
-	}
-	say := func(minutes int, inGame bool) error {
-		all := map[string]string{}
-		for k, v := range vars {
-			all[k] = v
-		}
+	count := func() (int, error) { return c.online(ctx, cfg) }
+	say := func(minutes int) error {
+		all := withVar(vars, "minutes", "")
 		if minutes > 0 {
 			all["minutes"] = strconv.Itoa(minutes)
 		}
-		return c.message(ctx, cfg, kind, all, inGame)
+		return c.message(ctx, cfg, kind, all, true)
 	}
 	marks := cfg.Warnings.Marks()
 	if !countdown {
@@ -50,9 +47,10 @@ func (c *Controller) warningResult(ctx context.Context, cfg server.Config, kind 
 	return nil
 }
 
-// announce is the timing of warnPlayers, apart from the game. A failed
+// announce is the timing of warnPlayers, apart from the game. The countdown
+// ends early once nobody is online, since then nobody waits for it. A failed
 // warning is returned at the end and never shortens the countdown.
-func announce(ctx context.Context, marks []int, count func() (int, error), say func(minutes int, inGame bool) error, wait func(context.Context, time.Duration) error) error {
+func announce(ctx context.Context, marks []int, count func() (int, error), say func(minutes int) error, wait func(context.Context, time.Duration) error) error {
 	var failed error
 	note := func(err error) {
 		if err != nil && failed == nil {
@@ -66,7 +64,7 @@ func announce(ctx context.Context, marks []int, count func() (int, error), say f
 		if online == 0 {
 			break
 		}
-		note(say(minutes, true))
+		note(say(minutes))
 		said = true
 		next := 0
 		if i+1 < len(marks) {
@@ -77,24 +75,20 @@ func announce(ctx context.Context, marks []int, count func() (int, error), say f
 		}
 	}
 	if !said {
-		// The action happens now: one message, to whoever is still there.
-		online, err := count()
-		note(err)
-		note(say(0, online > 0))
+		// The action happens now: one message.
+		note(say(0))
 	}
 	return failed
 }
 
 // warnUntil announces a restart or stop fixed in time: each message goes
-// out its minutes before due, and it returns at due whether anyone is online
-// or not, so the action happens exactly when it was set for. Discord gets
-// every message; the game only while someone is online.
+// out its minutes before due, and it returns at due, so the action happens
+// exactly when it was set for.
 func (c *Controller) warnUntil(ctx context.Context, cfg server.Config, kind string, vars map[string]string, marks []int, due time.Time) error {
-	count := func() (int, error) { return c.online(ctx, cfg) }
-	say := func(minutes int, inGame bool) error {
-		return c.message(ctx, cfg, kind, withVar(vars, "minutes", strconv.Itoa(minutes)), inGame)
+	say := func(minutes int) error {
+		return c.message(ctx, cfg, kind, withVar(vars, "minutes", strconv.Itoa(minutes)), true)
 	}
-	err := countdown(ctx, marks, due, time.Now, count, say, sleepCtx)
+	err := countdown(ctx, marks, due, time.Now, say, sleepCtx)
 	return c.warningResult(ctx, cfg, kind, err)
 }
 
@@ -102,13 +96,8 @@ func (c *Controller) warnUntil(ctx context.Context, cfg server.Config, kind stri
 // more than half a minute past, as after a late claim, is skipped. A failed
 // warning is returned at the end and never moves the action.
 func countdown(ctx context.Context, marks []int, due time.Time, now func() time.Time,
-	count func() (int, error), say func(minutes int, inGame bool) error, wait func(context.Context, time.Duration) error) error {
+	say func(minutes int) error, wait func(context.Context, time.Duration) error) error {
 	var failed error
-	note := func(err error) {
-		if err != nil && failed == nil {
-			failed = err
-		}
-	}
 	for _, minutes := range marks {
 		at := due.Add(-time.Duration(minutes) * time.Minute)
 		late := now().Sub(at)
@@ -120,9 +109,9 @@ func countdown(ctx context.Context, marks []int, due time.Time, now func() time.
 				return err
 			}
 		}
-		online, err := count()
-		note(err)
-		note(say(minutes, err == nil && online > 0))
+		if err := say(minutes); err != nil && failed == nil {
+			failed = err
+		}
 	}
 	if left := due.Sub(now()); left > 0 {
 		if err := wait(ctx, left); err != nil {

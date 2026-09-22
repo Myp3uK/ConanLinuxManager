@@ -95,8 +95,7 @@ func TestTelegramChannel(t *testing.T) {
 	if err := json.Unmarshal([]byte(rec.bodies[0]), &sent); err != nil {
 		t.Fatal(err)
 	}
-	want := "<b>🔴 Сервер упал</b>\n<i>PvE &lt;1&gt;</i>\nСервер PvE упал.\n<b>Выход:</b> signal SIGSEGV"
-	if sent.ChatID != "-1001234567890" || sent.Mode != "HTML" || sent.ThreadID != 7 || sent.Text != want {
+	if sent.ChatID != "-1001234567890" || sent.Mode != "" || sent.ThreadID != 7 || sent.Text != "Сервер PvE упал." {
 		t.Fatalf("sent %+v", sent)
 	}
 }

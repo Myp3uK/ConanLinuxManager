@@ -237,8 +237,11 @@ func (c *Channel) apply(in Input) error {
 			}
 			c.secret.URL = strings.TrimSpace(*in.WebhookURL)
 		}
-		// Discord has neither: they belong to the other kinds.
-		c.Settings = Settings{}
+		// Of the settings Discord takes only its own JSON template.
+		c.Settings = Settings{Body: c.Settings.Body}
+		if err := validJSONTemplate(c.Settings.Body); err != nil {
+			return err
+		}
 	case KindTelegram:
 		if in.Token != nil {
 			token := strings.TrimSpace(*in.Token)
