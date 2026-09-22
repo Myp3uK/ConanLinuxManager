@@ -704,8 +704,11 @@ async function viewNewServer() {
     };
     const created = await api('POST', '/servers', config);
     toast('Сервер создан');
-    location.hash = `#/server/${enc(created.id)}`;
-    if (installNow.checked) runJob(await api('POST', `/servers/${enc(created.id)}/install`));
+    if (!installNow.checked) { location.hash = `#/server/${enc(created.id)}`; return; }
+    // The install is watched in SteamCMD's log from the start.
+    const job = await api('POST', `/servers/${enc(created.id)}/install`);
+    openLog(created.id, 'steamcmd');
+    runJob(job);
   });
   replace(app,
     h('div', { class: 'head' }, h('a', { href: '#/', text: '← Серверы' }), h('h1', { text: 'Новый сервер' })),
@@ -993,9 +996,8 @@ function installNotice(d, ctx) {
   const log = h('button', { text: 'Лог SteamCMD', onclick: () => openLog(id, 'steamcmd') });
   const install = text => h('button', { class: 'primary', text, onclick: e => act(e.target, async () => {
     const job = await api('POST', `/servers/${enc(id)}/install`);
-    ctx.refresh();
+    openLog(id, 'steamcmd');
     await runJob(job);
-    ctx.refresh();
   }) });
   if (d.lifecycle.state === 'installing' || (job && ['running', 'queued'].includes(job.status))) {
     return h('div', { class: 'notice' }, h('strong', { text: 'Идёт установка. ' }),
@@ -1165,7 +1167,14 @@ const TAB_VIEWS = {
       out));
     fillHeight(out, 20, 260);
     await load();
-    every(5000, () => { if (auto.checked && document.visibilityState === 'visible') load(); });
+    // SteamCMD's progress moves every second; the game's log is read less often.
+    let refreshTimer = null;
+    const tick = async () => {
+      if (auto.checked && document.visibilityState === 'visible') await load();
+      refreshTimer = setTimeout(tick, name.value === 'steamcmd' ? 1000 : 5000);
+    };
+    refreshTimer = setTimeout(tick, name.value === 'steamcmd' ? 1000 : 5000);
+    onLeave(() => clearTimeout(refreshTimer));
   },
 
   async config(body, ctx) {
@@ -1519,7 +1528,9 @@ const TAB_VIEWS = {
       h('div', { class: 'panel' }, h('div', { class: 'row' },
         h('button', { text: 'Установить / проверить файлы', disabled: ctx.detail.lifecycle.state !== 'idle', onclick: e => act(e.target, async () => {
           if (!await ask('Запустить SteamCMD для этого сервера? Сервер должен быть остановлен.', { ok: 'Запустить', danger: false })) return;
-          await runJob(await api('POST', `/servers/${enc(s.id)}/install`)); ctx.refresh();
+          const job = await api('POST', `/servers/${enc(s.id)}/install`);
+          openLog(s.id, 'steamcmd');
+          await runJob(job);
         }) }),
         h('span', { class: 'spacer' }), deleteButton)));
   },

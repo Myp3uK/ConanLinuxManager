@@ -67,13 +67,18 @@ func TestDeleteKeepsTheWorldUnlessAsked(t *testing.T) {
 	if err := c.Delete(ctx, "wipe", DeleteOptions{Files: true, Backups: true}); err != nil {
 		t.Fatal(err)
 	}
-	for _, gone := range []string{filepath.Join(root, "servers", "wipe", "game"), filepath.Join(c.BackupDir, "wipe")} {
+	// The emptied servers/<id> directory goes with the game; the other
+	// server's stays.
+	for _, gone := range []string{filepath.Join(root, "servers", "wipe"), filepath.Join(c.BackupDir, "wipe")} {
 		if _, err := os.Stat(gone); !os.IsNotExist(err) {
 			t.Fatalf("%s left behind", gone)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(c.BackupDir, "keep")); err != nil {
 		t.Fatal("another server's backups were removed")
+	}
+	if _, err := os.Stat(filepath.Join(root, "servers")); err != nil {
+		t.Fatal("the servers directory was removed")
 	}
 }
 

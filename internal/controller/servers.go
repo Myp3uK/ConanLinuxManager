@@ -102,6 +102,11 @@ func (c *Controller) Delete(ctx context.Context, id string, opts DeleteOptions) 
 		if err := os.RemoveAll(cfg.InstallDir); err != nil {
 			return fmt.Errorf("server deleted, but its files were not: %w", err)
 		}
+		// The usual layout is servers/<id>/game; the <id> directory left
+		// empty goes too. os.Remove fails on a directory that is not empty.
+		if parent := filepath.Dir(filepath.Clean(cfg.InstallDir)); filepath.Base(parent) == cfg.ID {
+			_ = os.Remove(parent)
+		}
 	}
 	return nil
 }
