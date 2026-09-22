@@ -240,7 +240,8 @@ if [[ -n "${DOMAIN}" ]]; then
   say "configuring https://${DOMAIN}"
   install -d -m 0755 /etc/caddy
   touch "${CADDYFILE}"
-  cp -a "${CADDYFILE}" "${CADDYFILE}.bak-$(date +%Y%m%d%H%M%S)"
+  backup="${CADDYFILE}.bak-$(date +%Y%m%d%H%M%S)"
+  cp -a "${CADDYFILE}" "${backup}"
   sed -i '/^# conan-manager begin/,/^# conan-manager end/d' "${CADDYFILE}"
   # The packaged Caddyfile only serves a placeholder page on :80, which
   # would shadow the redirect to HTTPS; it is replaced. Any other sites the
@@ -263,6 +264,8 @@ ${DOMAIN} {
 # conan-manager end
 EOF
   caddy validate --adapter caddyfile --config "${CADDYFILE}" >/dev/null 2>&1 || die "Caddy rejected ${CADDYFILE}; the previous version is in ${CADDYFILE}.bak-*"
+  # A rerun that changes nothing leaves no backup behind.
+  if cmp -s "${backup}" "${CADDYFILE}"; then rm -f "${backup}"; fi
   systemctl enable --quiet caddy
   systemctl reload caddy 2>/dev/null || systemctl restart caddy
 

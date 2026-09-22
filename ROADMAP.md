@@ -271,10 +271,14 @@ Chrome на живом node2 сценарием из 10 шагов: бэкап, 
       на 15 минут; API - 20 запросов/с с запасом 200 на адрес.
 - [x] Добавить audit log для lifecycle, configuration, backup и recovery
       actions: таблица `audit_log`, страница «Аудит», входы и отказы.
-- [ ] Проверить permissions, ownership и secret handling на чистой Linux-установке.
-      Сделано на node2 (не чистый): самопроверка в панели, база 0600 при
-      каждом запуске, `UMask=0027`, install.sh ставит данным 0750 и файлу
-      окружения root:root 0600. Нужна чистая Ubuntu (VM или контейнер).
+- [x] Проверить permissions, ownership и secret handling на чистой Linux-установке.
+      node2 очищен от всего, что связано с менеджером (включая Go и
+      исходники); установка с нуля: клон по deploy key, Go с go.dev,
+      `scripts/build.sh`, `install.sh --domain` с Caddy и Let's Encrypt,
+      установка и запуск сервера из панели. Файл окружения root:root 0600,
+      данные 0750, база 0600, самопроверка без проблем. Найдено и исправлено:
+      первый app_update свежего SteamCMD падает с «Missing configuration»,
+      запуск без установленной игры, тихий обрыв install.sh при повторе.
 
 ## 7. Game/server integrations
 
