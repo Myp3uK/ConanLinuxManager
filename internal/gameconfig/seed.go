@@ -13,8 +13,7 @@ import (
 // LogCategories are the log categories a fresh server starts with and their
 // levels, as the Windows Dedicated Server Launcher writes them: the game's
 // defaults log so much that ConanSandbox.log grows by gigabytes. Levels from
-// quietest: NoLogging, Fatal, Error, Warning, Display, Log, Verbose,
-// VeryVerbose, All.
+// quietest: None, Fatal, Error, Warning, Display, Log, Verbose, VeryVerbose.
 var LogCategories = [][2]string{
 	{"Gamecode_AI", "Error"}, {"Gamecode_NPC", "Error"}, {"Gamecode_Effects", "Error"}, {"Network", "Error"},
 	{"SmokeTest", "Error"}, {"AI", "Error"}, {"LogAnimation", "Error"}, {"LogDataTable", "Error"},

@@ -835,8 +835,8 @@ function gameSettings(ctx, running, reload, views) {
 
 // Unreal's log levels, quietest first.
 const LOG_LEVELS = [
-  ['NoLogging', 'ничего'], ['Fatal', 'только фатальные'], ['Error', 'ошибки'], ['Warning', 'предупреждения'],
-  ['Display', 'важные сообщения'], ['Log', 'обычный лог'], ['Verbose', 'подробно'], ['VeryVerbose', 'очень подробно'], ['All', 'всё'],
+  ['None', 'ничего - лог выключен'], ['Fatal', 'только фатальные ошибки'], ['Error', 'ошибки'], ['Warning', 'предупреждения'],
+  ['Display', 'сообщения в лог и консоль'], ['Log', 'обычный лог, без консоли'], ['Verbose', 'подробно'], ['VeryVerbose', 'очень подробно'],
 ];
 
 // gameLogLevels edits [Core.Log] of Engine.ini: one row per log category
@@ -850,10 +850,10 @@ function gameLogLevels(ctx, running, reload, views, recommended) {
   const rows = [];   // { name(), select, stored }
   const list = h('div', { class: 'log-levels' });
 
-  const levelSelect = (value, recommendedLevel) => {
+  const levelSelect = value => {
     const select = h('select', { disabled: running },
       h('option', { value: '', text: 'по умолчанию игры' }),
-      LOG_LEVELS.map(([v, t]) => h('option', { value: v, text: `${v} - ${t}` + (v === recommendedLevel ? ' (рекомендуется)' : '') })));
+      LOG_LEVELS.map(([v, t]) => h('option', { value: v, text: `${v} - ${t}` })));
     // Unreal takes the level in any case; the list shows the canonical one.
     const match = LOG_LEVELS.find(([v]) => v.toLowerCase() === (value || '').toLowerCase());
     if (value && !match) select.append(h('option', { value, text: value }));
@@ -865,8 +865,8 @@ function gameLogLevels(ctx, running, reload, views, recommended) {
     line.remove();
     if (!rows.some(r => r.blank)) addBlank();
   } });
-  const addRow = (name, value, recommendedLevel, custom) => {
-    const row = { name: () => name, select: levelSelect(value, recommendedLevel), stored: value };
+  const addRow = (name, value, custom) => {
+    const row = { name: () => name, select: levelSelect(value), stored: value };
     const line = h('div', { class: 'log-level' }, h('label', { class: 'mono', text: name, title: name }), row.select, h('span'));
     if (custom) line.lastChild.replaceWith(removeButton(row, line));
     rows.push(row);
@@ -876,7 +876,7 @@ function gameLogLevels(ctx, running, reload, views, recommended) {
   // opens another empty row below.
   const addBlank = () => {
     const input = h('input', { class: 'mono', placeholder: 'Своя категория, например LogMyMod', disabled: running, autocomplete: 'off', spellcheck: 'false' });
-    const row = { name: () => input.value.trim(), select: levelSelect('', null), stored: null, blank: true };
+    const row = { name: () => input.value.trim(), select: levelSelect(''), stored: null, blank: true };
     const line = h('div', { class: 'log-level' }, input, row.select, h('span'));
     input.oninput = () => {
       if (!row.blank || !input.value.trim()) return;
@@ -890,10 +890,10 @@ function gameLogLevels(ctx, running, reload, views, recommended) {
   };
   for (const c of recommended) {
     const e = stored.get(c.name.toLowerCase());
-    addRow(e ? e.key : c.name, e ? e.value : '', c.level, false);
+    addRow(e ? e.key : c.name, e ? e.value : '', false);
   }
   for (const e of (section ? section.entries : [])) {
-    if (!known.has(e.key.toLowerCase())) addRow(e.key, e.value, null, true);
+    if (!known.has(e.key.toLowerCase())) addRow(e.key, e.value, true);
   }
   addBlank();
 
