@@ -766,6 +766,7 @@ const GAME_FIELDS = [
   { file: 'Engine', section: '/Script/OnlineSubsystemUtils.IpNetDriver', key: 'NetServerMaxTickRate', label: 'Максимальный тикрейт', type: 'number', def: '30' },
   { file: 'ServerSettings', section: 'ServerSettings', key: 'PVPEnabled', label: 'PvP', bool: true, def: 'False' },
   { file: 'ServerSettings', section: 'ServerSettings', key: 'IsBattlEyeEnabled', label: 'BattlEye', bool: true, def: 'False' },
+  { file: 'ServerSettings', section: 'ServerSettings', key: 'IsVACEnabled', label: 'VAC', bool: true, def: 'False' },
   { file: 'ServerSettings', section: 'ServerSettings', key: 'ServerMessageOfTheDay', label: 'Сообщение дня', def: '' },
   { group: 'RCON' },
   { file: 'Game', section: 'RconPlugin', key: 'RconEnabled', label: 'Включить RCON', bool: true, def: 'False', hint: 'Нужен для консоли, списка игроков и предупреждений.' },
@@ -1853,7 +1854,7 @@ async function viewNotifications() {
         h('div', { class: 'title' }, h('strong', { text: c.name }), h('span', { class: 'spacer' }),
           c.enabled ? h('span', { class: 'badge ok', text: 'включён' }) : h('span', { class: 'badge', text: 'выключен' })),
         facts([
-          ['Серверы', c.server_id ? serverName(c.server_id) : 'все'],
+          ['Серверы', (c.server_ids || []).length ? c.server_ids.map(serverName).join(', ') : 'все'],
           ['Присылает', cats.filter(x => keys.includes(x.key)).map(x => x.title).join(', ') || '-'],
           c.kind === 'discord' && ['Упоминание', c.mention ? h('span', { class: 'mono', text: c.mention }) : 'нет'],
           ['Куда', h('span', {}, h('span', { class: 'badge', text: KIND_NAMES[c.kind] || c.kind }), ' ', h('span', { class: 'mono small', text: c.target }))],
@@ -1876,7 +1877,22 @@ async function viewNotifications() {
     const st = c.settings || {};
     const keep = channel ? 'оставьте пустым, чтобы не менять' : '';
     const name = h('input', { value: c.name || { discord: 'Discord', telegram: 'Telegram', http: 'Мой сайт' }[kind], autocomplete: 'off' });
-    const server = h('select', {}, h('option', { value: '', text: 'Все серверы' }), servers.map(s => h('option', { value: s.id, text: s.name, selected: c.server_id === s.id })));
+    // A channel watches any set of servers, so the field is a list of them
+    // with one switch for "all": an empty set is what "all" means on the
+    // server, and it keeps taking servers added later.
+    const watched = c.server_ids || [];
+    const allServers = h('input', { type: 'checkbox', checked: !watched.length });
+    const serverBoxes = Object.fromEntries(servers.map(x => [x.id, h('input', { type: 'checkbox', checked: watched.includes(x.id) })]));
+    const serverList = h('div', { class: 'server-pick' }, servers.length
+      ? servers.map(x => h('label', { class: 'check-row' }, serverBoxes[x.id], h('span', {}, x.name)))
+      : h('p', { class: 'muted small', text: 'Серверов пока нет.' }));
+    const syncServers = () => {
+      serverList.classList.toggle('off', allServers.checked);
+      Object.values(serverBoxes).forEach(b => { b.disabled = allServers.checked; });
+    };
+    allServers.addEventListener('change', syncServers);
+    syncServers();
+    const server = h('div', {}, h('label', { class: 'check-row' }, allServers, h('span', { text: 'Все серверы' })), serverList);
     const language = h('select', {}, [['ru', 'Русский'], ['en', 'English']].map(([v, t]) => h('option', { value: v, text: t, selected: c.language === v })));
     const enabled = h('input', { type: 'checkbox', checked: c.enabled });
     const proxy = h('input', { type: 'checkbox', checked: !!st.proxy });
@@ -1949,7 +1965,7 @@ async function viewNotifications() {
       h('h3', { text: '1. Куда писать' }),
       h('div', { class: 'form' }, where,
         field('Название', name, 'Для себя: чтобы отличать каналы в этом списке.'),
-        field('Серверы', server, 'От каких серверов присылать сообщения.')),
+        field('Серверы', server, 'От каких серверов присылать сообщения. «Все серверы» включает и те, что появятся позже.')),
       h('h3', { text: '2. Что присылать' }),
       h('div', { class: 'category-groups' }, columns),
       h('h3', { text: '3. Оформление' }),
@@ -1961,7 +1977,9 @@ async function viewNotifications() {
         h('button', { class: 'primary', text: channel ? 'Сохранить' : 'Добавить канал', onclick: e => act(e.target, async () => {
           const types = [...new Set(cats.filter(x => boxes[x.key].checked).flatMap(x => x.types))];
           if (!types.length) throw new Error('Выберите хотя бы одно сообщение');
-          const body = { name: name.value.trim(), server_id: server.value, min_severity: 'info', event_types: types,
+          const chosen = Object.entries(serverBoxes).filter(([, b]) => b.checked).map(([id]) => id);
+          if (!allServers.checked && !chosen.length) throw new Error('Выберите серверы или отметьте «Все серверы»');
+          const body = { name: name.value.trim(), server_ids: allServers.checked ? [] : chosen, min_severity: 'info', event_types: types,
             language: language.value, enabled: enabled.checked };
           if (!channel) body.kind = kind;
           collect(body);

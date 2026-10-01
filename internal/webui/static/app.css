@@ -276,3 +276,8 @@ body.locked > header.top, body.locked > main { display: none; }
 tr[draggable="true"] { cursor: grab; }
 tr.dragging { opacity: .45; }
 tr.drop-here > td { border-top: 2px solid var(--accent); }
+
+/* Notification channel: the servers it watches. The list scrolls so twenty
+   servers do not push the rest of the form off the screen. */
+.server-pick { max-height: 170px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; margin-top: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.server-pick.off { opacity: .45; }

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,9 +37,11 @@ type Channel struct {
 	Kind string `json:"kind"`
 	// Target is where the channel sends, masked: the secret parts are left
 	// out. WebhookMask is the same for Discord, kept for older clients.
-	Target      string   `json:"target"`
-	WebhookMask string   `json:"webhook,omitempty"`
-	ServerID    string   `json:"server_id,omitempty"`
+	Target      string `json:"target"`
+	WebhookMask string `json:"webhook,omitempty"`
+	// ServerIDs are the servers the channel watches. Empty means every
+	// server, including the ones added later.
+	ServerIDs   []string `json:"server_ids"`
 	MinSeverity string   `json:"min_severity"`
 	EventTypes  []string `json:"event_types"`
 	Language    string   `json:"language"`
@@ -94,8 +97,12 @@ type Input struct {
 	Token *string `json:"token"`
 	// Headers are an HTTP channel's headers, one "Name: value" per line; an
 	// empty string removes them.
-	Headers     *string   `json:"headers"`
-	Settings    *Settings `json:"settings"`
+	Headers  *string   `json:"headers"`
+	Settings *Settings `json:"settings"`
+	// ServerIDs limits the channel to those servers; an empty list is every
+	// server. ServerID is the older form of the same thing, one server or
+	// none, and is read when ServerIDs is absent.
+	ServerIDs   *[]string `json:"server_ids"`
 	ServerID    *string   `json:"server_id"`
 	MinSeverity *string   `json:"min_severity"`
 	EventTypes  *[]string `json:"event_types"`
@@ -121,6 +128,27 @@ var (
 	// reservedHeaders are set by the manager or by the transport.
 	reservedHeaders = map[string]bool{"host": true, "content-length": true, "content-type": true, "transfer-encoding": true, "connection": true}
 )
+
+// maxChannelServers bounds the set a channel may watch; a manager with more
+// servers than this on one host has other problems.
+const maxChannelServers = 200
+
+// cleanServerIDs drops blanks and repeats and puts the ids in a settled order,
+// so "every server" is one shape - the empty list - however it was asked for.
+func cleanServerIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	result := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		result = append(result, id)
+	}
+	sort.Strings(result)
+	return result
+}
 
 // validWebhook accepts only a Discord webhook. A Discord channel sends to
 // Discord and nowhere else; any other address is an HTTP channel, with its
@@ -278,8 +306,12 @@ func (c *Channel) apply(in Input) error {
 	default:
 		return fmt.Errorf("kind must be discord, telegram or http")
 	}
-	if in.ServerID != nil {
-		c.ServerID = *in.ServerID
+	// server_ids is the current form; server_id is the older one, and naming
+	// one server there still means a channel that watches only it.
+	if in.ServerIDs != nil {
+		c.ServerIDs = cleanServerIDs(*in.ServerIDs)
+	} else if in.ServerID != nil {
+		c.ServerIDs = cleanServerIDs([]string{*in.ServerID})
 	}
 	if in.MinSeverity != nil {
 		c.MinSeverity = *in.MinSeverity
@@ -399,24 +431,35 @@ func (r *Repository) save(ctx context.Context, c Channel, create bool) error {
 	if err != nil {
 		return err
 	}
-	var server any
-	if c.ServerID != "" {
-		server = c.ServerID
-	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
+	// The channel and the servers it watches are written together: a half
+	// saved channel would send to the wrong set until the next edit.
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	if create {
-		_, err = r.db.ExecContext(ctx, `INSERT INTO notification_channels
-            (id,name,kind,secret,settings,server_id,min_severity,event_types,language,mention,enabled,created_at,updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, c.ID, c.Name, c.Kind, sealed, string(settings), server, c.MinSeverity, string(types), c.Language, c.Mention, c.Enabled, now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO notification_channels
+            (id,name,kind,secret,settings,min_severity,event_types,language,mention,enabled,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, c.ID, c.Name, c.Kind, sealed, string(settings), c.MinSeverity, string(types), c.Language, c.Mention, c.Enabled, now, now)
 	} else {
-		_, err = r.db.ExecContext(ctx, `UPDATE notification_channels SET name=?,secret=?,settings=?,server_id=?,min_severity=?,
+		_, err = tx.ExecContext(ctx, `UPDATE notification_channels SET name=?,secret=?,settings=?,min_severity=?,
             event_types=?,language=?,mention=?,enabled=?,updated_at=? WHERE id=?`,
-			c.Name, sealed, string(settings), server, c.MinSeverity, string(types), c.Language, c.Mention, c.Enabled, now, c.ID)
+			c.Name, sealed, string(settings), c.MinSeverity, string(types), c.Language, c.Mention, c.Enabled, now, c.ID)
 	}
 	if err != nil {
 		return fmt.Errorf("save notification channel: %w", err)
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `DELETE FROM notification_channel_servers WHERE channel_id=?`, c.ID); err != nil {
+		return fmt.Errorf("save notification channel servers: %w", err)
+	}
+	for _, id := range c.ServerIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO notification_channel_servers (channel_id,server_id) VALUES (?,?)`, c.ID, id); err != nil {
+			return fmt.Errorf("channel %q cannot watch server %q: %w", c.Name, id, err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (r *Repository) Delete(ctx context.Context, id string) error {
@@ -448,8 +491,10 @@ func (r *Repository) get(ctx context.Context, id string) (Channel, error) {
 }
 
 func (r *Repository) query(ctx context.Context, where string, args ...any) ([]Channel, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id,name,kind,secret,settings,COALESCE(server_id,''),min_severity,event_types,language,mention,enabled,
-        COALESCE(last_sent_at,''),COALESCE(last_error,'') FROM notification_channels `+where, args...)
+	rows, err := r.db.QueryContext(ctx, `SELECT id,name,kind,secret,settings,min_severity,event_types,language,mention,enabled,
+        COALESCE(last_sent_at,''),COALESCE(last_error,''),
+        COALESCE((SELECT group_concat(server_id, char(10)) FROM notification_channel_servers WHERE channel_id=notification_channels.id),'')
+        FROM notification_channels `+where, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -458,8 +503,14 @@ func (r *Repository) query(ctx context.Context, where string, args ...any) ([]Ch
 	for rows.Next() {
 		var c Channel
 		var sealed, types, settings string
-		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &sealed, &settings, &c.ServerID, &c.MinSeverity, &types, &c.Language, &c.Mention, &c.Enabled, &c.LastSentAt, &c.LastError); err != nil {
+		var servers string
+		if err := rows.Scan(&c.ID, &c.Name, &c.Kind, &sealed, &settings, &c.MinSeverity, &types, &c.Language, &c.Mention, &c.Enabled, &c.LastSentAt, &c.LastError, &servers); err != nil {
 			return nil, err
+		}
+		c.ServerIDs = []string{}
+		if servers != "" {
+			c.ServerIDs = strings.Split(servers, "\n")
+			sort.Strings(c.ServerIDs)
 		}
 		_ = json.Unmarshal([]byte(types), &c.EventTypes)
 		if c.EventTypes == nil {

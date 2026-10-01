@@ -97,8 +97,18 @@ func (c Channel) wants(e events.Event) bool {
 	if !c.Enabled || !c.usable() {
 		return false
 	}
-	if c.ServerID != "" && c.ServerID != e.ServerID {
-		return false
+	// No servers named means every server, including ones added later.
+	if len(c.ServerIDs) > 0 {
+		watched := false
+		for _, id := range c.ServerIDs {
+			if id == e.ServerID {
+				watched = true
+				break
+			}
+		}
+		if !watched {
+			return false
+		}
 	}
 	if severityRank(string(e.Severity)) < severityRank(c.MinSeverity) {
 		return false

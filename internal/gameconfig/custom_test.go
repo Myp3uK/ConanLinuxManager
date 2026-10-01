@@ -3,6 +3,7 @@ package gameconfig
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/example/conan-manager/internal/server"
@@ -94,5 +95,40 @@ func TestListShowsTheGamesFilesFirstThenTheRest(t *testing.T) {
 		if f.File == "notes.txt" || filepath.Ext(f.File) != ".ini" {
 			t.Errorf("unexpected entry: %+v", f)
 		}
+	}
+}
+
+func TestSeedMatchesWhatTheGameWrites(t *testing.T) {
+	cfg := customConfig(t)
+	cfg.Name = "MooRTest"
+	written, err := Seed(cfg)
+	if err != nil || len(written) != 3 {
+		t.Fatalf("seed: %v, %v", written, err)
+	}
+	for _, file := range []string{"Engine", "Game", "ServerSettings"} {
+		path, err := FilePath(cfg, file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The game puts this line at the top of every config it writes.
+		if !strings.HasPrefix(string(data), ";METADATA=(Diff=true, UseCommands=true)\n") {
+			t.Errorf("%s does not start with the game's own header: %q", file, string(data[:40]))
+		}
+	}
+	// The log levels are the launcher's, so one that drifts from it is a bug;
+	// Modding is the one that did.
+	levels := map[string]string{}
+	for _, c := range LogCategories {
+		levels[c[0]] = c[1]
+	}
+	if levels["Modding"] != "Warning" {
+		t.Errorf("Modding = %q; the launcher writes Warning", levels["Modding"])
+	}
+	if len(LogCategories) != 39 {
+		t.Errorf("got %d categories; the launcher writes 39", len(LogCategories))
 	}
 }

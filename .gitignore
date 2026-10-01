@@ -4,6 +4,7 @@ Thumbs.db
 .idea/
 .vscode/
 .claude/
+.configs/
 
 # Python bytecode and caches
 __pycache__/

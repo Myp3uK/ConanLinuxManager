@@ -17,7 +17,7 @@ import (
 var LogCategories = [][2]string{
 	{"Gamecode_AI", "Error"}, {"Gamecode_NPC", "Error"}, {"Gamecode_Effects", "Error"}, {"Network", "Error"},
 	{"SmokeTest", "Error"}, {"AI", "Error"}, {"LogAnimation", "Error"}, {"LogDataTable", "Error"},
-	{"LogStreamableManager", "Error"}, {"ConanSandbox", "Warning"}, {"NPC", "Fatal"}, {"Modding", "Error"},
+	{"LogStreamableManager", "Error"}, {"ConanSandbox", "Warning"}, {"NPC", "Fatal"}, {"Modding", "Warning"},
 	{"LogScriptCore", "Error"}, {"LogRep", "Error"}, {"ConanBattlePass", "Error"}, {"ItemInventory", "Fatal"},
 	{"LogTextLocalizationManager", "Error"}, {"Combat", "Error"}, {"building", "Error"}, {"LogModController", "Error"},
 	{"GlobalServerChannel", "Warning"}, {"LogPhysics", "Error"}, {"PIE", "Error"}, {"LogCharacterMovement", "Fatal"},
@@ -27,6 +27,11 @@ var LogCategories = [][2]string{
 	{"thrall", "Error"}, {"LogScript", "Error"}, {"LogNet", "Error"}, {"LogIrisReferences", "Error"},
 	{"LogRcon", "Error"}, {"LogIris", "Error"},
 }
+
+// iniHeader is the line the game itself puts at the top of every config file
+// it writes. A seeded file carries it too, so the game is handed a file in the
+// shape it writes rather than one it has to make sense of.
+const iniHeader = ";METADATA=(Diff=true, UseCommands=true)\n"
 
 // seeds are the files a new server starts with. Ports are left out: the
 // manager passes them on the command line, and a copy here would go stale
@@ -38,12 +43,16 @@ func seeds(cfg server.Config) map[string]string {
 		logs.WriteString(c[0] + "=" + c[1] + "\n")
 	}
 	return map[string]string{
-		"Engine": "[OnlineSubsystem]\nServerName=" + oneLine(cfg.Name) + "\nServerPassword=\n\n" +
+		// The join password lives in ServerSettings.ini, which is where the
+		// panel writes it; a second empty copy here would be one place too
+		// many to look when it does not take effect.
+		"Engine": iniHeader + "[OnlineSubsystem]\nServerName=" + oneLine(cfg.Name) + "\n\n" +
 			"[/Script/OnlineSubsystemUtils.IpNetDriver]\nNetServerMaxTickRate=30\n\n" +
 			"[Core.Log]\n" + logs.String(),
-		"Game": "[RconPlugin]\nRconEnabled=False\nRconPort=25575\nRconMaxKarma=60\nRconMessageMethod=0\nRconPassword=\n\n" +
+		"Game": iniHeader + "[RconPlugin]\nRconEnabled=False\nRconPort=25575\nRconMaxKarma=60\nRconMessageMethod=0\nRconPassword=\n\n" +
 			"[/Script/Engine.GameSession]\nMaxPlayers=40\n",
-		"ServerSettings": "[ServerSettings]\nAdminPassword=\nserverRegion=0\nPVPEnabled=False\nIsBattlEyeEnabled=False\n",
+		"ServerSettings": iniHeader + "[ServerSettings]\nAdminPassword=\nserverRegion=0\nPVPEnabled=False\n" +
+			"IsBattlEyeEnabled=False\nIsVACEnabled=False\n",
 	}
 }
 

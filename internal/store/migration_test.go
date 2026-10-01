@@ -232,3 +232,75 @@ INSERT INTO notification_channels(id,name,kind,secret,created_at,updated_at) VAL
 		t.Fatalf("telegram refused: %v", err)
 	}
 }
+
+// A channel that watched one server keeps watching it once channels can watch
+// a set, and a channel that watched all of them keeps watching all.
+func TestChannelServerUpgradeKeepsWhoWatchesWhat(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manager.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.DB().Exec(`DELETE FROM manager_migrations;
+DROP TABLE IF EXISTS notification_channel_servers;
+DROP TABLE notification_channels;
+CREATE TABLE notification_channels (id TEXT PRIMARY KEY, name TEXT NOT NULL,
+ kind TEXT NOT NULL CHECK (kind IN ('discord', 'telegram', 'http')), secret TEXT NOT NULL,
+ settings TEXT NOT NULL DEFAULT '{}', server_id TEXT REFERENCES servers(id) ON DELETE CASCADE,
+ min_severity TEXT NOT NULL DEFAULT 'info', event_types TEXT NOT NULL DEFAULT '[]',
+ language TEXT NOT NULL DEFAULT 'ru', mention TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+ last_sent_at TEXT, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+INSERT INTO servers(id,name,engine,runtime,install_dir,steamcmd_dir,ramdisk_path,game_port,query_port,created_at,updated_at)
+ VALUES('alpha','Alpha','ue5','native','/srv/a','/srv/s','',7777,27015,'2026-09-20','2026-09-20');
+INSERT INTO notification_channels(id,name,kind,secret,server_id,created_at,updated_at)
+ VALUES('one','Alpha only','discord','sealed','alpha','2026-09-20','2026-09-20');
+INSERT INTO notification_channels(id,name,kind,secret,server_id,created_at,updated_at)
+ VALUES('all','Everything','discord','sealed',NULL,'2026-09-20','2026-09-20');
+INSERT INTO notification_channels(id,name,kind,secret,server_id,created_at,updated_at)
+ VALUES('two','Alpha again','discord','sealed','alpha','2026-09-20','2026-09-20');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if s, err = Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	watched := func(channel string) []string {
+		rows, err := s.DB().Query(`SELECT server_id FROM notification_channel_servers WHERE channel_id=? ORDER BY server_id`, channel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				t.Fatal(err)
+			}
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	// Dropping the old table cascades into the new one unless the pairs are
+	// parked first, so this is the assertion that catches that.
+	if got := watched("one"); len(got) != 1 || got[0] != "alpha" {
+		t.Errorf("the one-server channel lost its server: %v", got)
+	}
+	if got := watched("all"); len(got) != 0 {
+		t.Errorf("the all-servers channel should name none: %v", got)
+	}
+	// Two channels on the same server each keep their own row.
+	if got := watched("two"); len(got) != 1 || got[0] != "alpha" {
+		t.Errorf("the second channel lost its server: %v", got)
+	}
+	var count int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM notification_channels`).Scan(&count); err != nil || count != 3 {
+		t.Fatalf("channels lost: %d, %v", count, err)
+	}
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM pragma_table_info('notification_channels') WHERE name='server_id'`).Scan(&count); err != nil || count != 0 {
+		t.Errorf("the old column is still there: %d, %v", count, err)
+	}
+}

@@ -287,8 +287,6 @@ Chrome на живом node2 сценарием из 10 шагов: бэкап, 
 - [ ] Реализовать player count через query protocol.
 - [x] Реализовать RCON (см. 1a).
 - [x] Добавить предупреждения игрокам перед scheduled stop/restart (см. 1a).
-- [ ] Проверить и стабилизировать UE4 через Wine/Proton.
-- [ ] Добавить отдельный Ubuntu smoke-test для UE4.
 - [ ] Добавить автоматический импорт существующего Conan-сервера.
 - [x] Добавить Steam Workshop/mod management (см. раздел 1a).
 

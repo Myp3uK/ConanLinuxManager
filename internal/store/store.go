@@ -99,7 +99,6 @@ CREATE TABLE IF NOT EXISTS notification_channels (
     kind TEXT NOT NULL CHECK (kind IN ('discord', 'telegram', 'http')),
     secret TEXT NOT NULL,
     settings TEXT NOT NULL DEFAULT '{}',
-    server_id TEXT REFERENCES servers(id) ON DELETE CASCADE,
     min_severity TEXT NOT NULL DEFAULT 'info' CHECK (min_severity IN ('info', 'warning', 'error')),
     event_types TEXT NOT NULL DEFAULT '[]',
     language TEXT NOT NULL DEFAULT 'ru' CHECK (language IN ('ru', 'en')),
@@ -109,6 +108,15 @@ CREATE TABLE IF NOT EXISTS notification_channels (
     last_error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+-- A channel with no row here takes events from every server; the rows pick
+-- the servers it is limited to. Deleting a server removes only its own rows,
+-- so a channel that watches three servers survives losing one.
+CREATE TABLE IF NOT EXISTS notification_channel_servers (
+    channel_id TEXT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    PRIMARY KEY (channel_id, server_id)
 );
 
 CREATE TABLE IF NOT EXISTS config_versions (
@@ -462,6 +470,58 @@ SELECT id, name, kind, secret, server_id, min_severity, event_types,
 FROM notification_channels;
 DROP TABLE notification_channels;
 ALTER TABLE notification_channels_v2 RENAME TO notification_channels;
+`),
+	},
+	{
+		// A channel used to watch one server or all of them. It now watches a
+		// set, which the join table holds, so the single column goes away and
+		// whatever it pointed at becomes that channel's first member.
+		name: "notification-channel-servers-v1",
+		needed: func(tx *sql.Tx) (bool, error) {
+			var count int
+			err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('notification_channels') WHERE name='server_id'`).Scan(&count)
+			return count > 0, err
+		},
+		// The pairs are parked in a table of their own before the rebuild:
+		// with foreign keys on, dropping notification_channels performs an
+		// implicit DELETE FROM, and that would cascade the new rows away as
+		// fast as they were written.
+		apply: script(`
+CREATE TABLE notification_channel_servers_seed AS
+SELECT id AS channel_id, server_id FROM notification_channels
+WHERE server_id IS NOT NULL AND server_id <> '';
+CREATE TABLE notification_channels_v3 (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('discord', 'telegram', 'http')),
+    secret TEXT NOT NULL,
+    settings TEXT NOT NULL DEFAULT '{}',
+    min_severity TEXT NOT NULL DEFAULT 'info' CHECK (min_severity IN ('info', 'warning', 'error')),
+    event_types TEXT NOT NULL DEFAULT '[]',
+    language TEXT NOT NULL DEFAULT 'ru' CHECK (language IN ('ru', 'en')),
+    mention TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_sent_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+INSERT INTO notification_channels_v3 (id, name, kind, secret, settings, min_severity, event_types,
+    language, mention, enabled, last_sent_at, last_error, created_at, updated_at)
+SELECT id, name, kind, secret, settings, min_severity, event_types,
+    language, mention, enabled, last_sent_at, last_error, created_at, updated_at
+FROM notification_channels;
+DROP TABLE notification_channels;
+ALTER TABLE notification_channels_v3 RENAME TO notification_channels;
+CREATE TABLE IF NOT EXISTS notification_channel_servers (
+    channel_id TEXT NOT NULL REFERENCES notification_channels(id) ON DELETE CASCADE,
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    PRIMARY KEY (channel_id, server_id)
+);
+INSERT OR IGNORE INTO notification_channel_servers (channel_id, server_id)
+SELECT channel_id, server_id FROM notification_channel_servers_seed
+WHERE server_id IN (SELECT id FROM servers);
+DROP TABLE notification_channel_servers_seed;
 `),
 	},
 }

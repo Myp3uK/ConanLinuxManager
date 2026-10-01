@@ -105,11 +105,17 @@ func TestChannelFilters(t *testing.T) {
 	if !c.wants(ready) || c.wants(events.Event{Type: events.ServerStarted, Severity: events.Info}) {
 		t.Fatal("quiet events must be left out by default")
 	}
-	c.ServerID = "b"
+	c.ServerIDs = []string{"b"}
 	if c.wants(crash) {
 		t.Fatal("server filter")
 	}
-	c.ServerID, c.EventTypes = "", []string{"server.ready"}
+	// A channel can watch several servers at once, and an event from any of
+	// them is taken.
+	c.ServerIDs = []string{"b", "a"}
+	if !c.wants(crash) {
+		t.Fatal("a channel watching several servers takes events from each")
+	}
+	c.ServerIDs, c.EventTypes = nil, []string{"server.ready"}
 	if c.wants(crash) || !c.wants(ready) {
 		t.Fatal("event type filter")
 	}
