@@ -42,8 +42,13 @@ type ModsStatus struct {
 // game's own INI files.
 const modListFile = "modlist.txt"
 
-// Mods returns a server's mod list in load order.
+// Mods returns a server's mod list in load order. A server that does not exist
+// is an error rather than an empty list: the panel would otherwise show a
+// deleted or mistyped server as one that simply has no mods.
 func (c *Controller) Mods(ctx context.Context, id string) ([]server.Mod, error) {
+	if _, err := c.Repo.Get(ctx, id); err != nil {
+		return nil, err
+	}
 	return c.Repo.Mods(ctx, id)
 }
 
@@ -113,7 +118,7 @@ func (c *Controller) AddCollection(ctx context.Context, id, collection string) (
 // CheckMods asks Steam what the listed items are and whether any changed. The
 // answer is stored, so the panel and the automatic update see the same thing.
 func (c *Controller) CheckMods(ctx context.Context, id string) (ModsStatus, error) {
-	list, err := c.Repo.Mods(ctx, id)
+	list, err := c.Mods(ctx, id)
 	if err != nil {
 		return ModsStatus{}, err
 	}

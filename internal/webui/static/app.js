@@ -213,10 +213,10 @@ function ask(text, { ok = 'Да', danger = true, extra = [], cancel = true } = {
   });
 }
 
-const JOB_NAMES = { stop: 'Остановка', start: 'Запуск', install: 'Установка', restart: 'Рестарт', update: 'Обновление', backup: 'Бэкап', restore: 'Восстановление' };
+const JOB_NAMES = { stop: 'Остановка', start: 'Запуск', install: 'Установка', restart: 'Рестарт', update: 'Обновление', backup: 'Бэкап', restore: 'Восстановление', mods: 'Моды' };
 // What a job is doing, said while it starts.
 const JOB_BEGUN = { stop: 'Останавливается', start: 'Запускается', install: 'Устанавливается', restart: 'Перезапускается',
-  update: 'Обновляется', backup: 'Создаётся бэкап', restore: 'Восстанавливается' };
+  update: 'Обновляется', backup: 'Создаётся бэкап', restore: 'Восстанавливается', mods: 'Моды качаются' };
 
 // runJob follows a background job to its end and reports how it went.
 async function runJob(job) {
@@ -934,7 +934,8 @@ function gameLogLevels(ctx, running, reload, views, recommended) {
 
 const TABS = [
   ['overview', 'Обзор'], ['settings', 'Настройки'], ['console', 'RCON'], ['logs', 'Логи'],
-  ['schedule', 'Рестарты'], ['backups', 'Бэкапы'], ['config', 'Конфиги'], ['history', 'История'],
+  ['schedule', 'Рестарты'], ['backups', 'Бэкапы'], ['config', 'Конфиги'], ['mods', 'Моды'],
+  ['history', 'История'],
 ];
 
 // serverPage is the server page on screen. Switching tabs of the same server
@@ -1275,6 +1276,133 @@ const TAB_VIEWS = {
       h('p', { class: 'muted small', text: 'Копия снимается с работающего сервера без остановки. Восстановление - только на остановленном. Бэкап также делается перед каждым обновлением.' }),
       box));
     await draw();
+  },
+
+  async mods(body, ctx) {
+    const box = h('div');
+    // local is the list being edited. It is written only when saved: putting
+    // every click through the API would leave a version of modlist.txt for
+    // each press of an arrow.
+    let local = [];
+    const save = h('button', { class: 'primary', text: 'Сохранить', disabled: true });
+    const dirty = () => { save.disabled = false; };
+    const sameList = saved => saved.length === local.length &&
+      saved.every((m, i) => m.workshop_id === local[i].workshop_id && m.enabled === local[i].enabled);
+
+    const statusOf = m => {
+      if (m.last_error) return h('span', { class: 'badge bad', title: m.last_error, text: 'ошибка' });
+      if (!m.paks || !m.paks.length) return h('span', { class: 'badge', text: 'не установлен' });
+      if (isSet(m.latest_updated) && isSet(m.installed_updated) &&
+        new Date(m.latest_updated) > new Date(m.installed_updated)) {
+        return h('span', { class: 'badge warn', text: 'есть обновление' });
+      }
+      return h('span', { class: 'badge ok', text: 'установлен' });
+    };
+    const move = (i, to) => {
+      if (to < 0 || to >= local.length) return;
+      [local[i], local[to]] = [local[to], local[i]];
+      dirty(); draw();
+    };
+
+    const draw = () => {
+      replace(box, table(['', 'Вкл.', 'Мод', 'Размер', 'Обновлён в Steam', 'Состояние', ''], local.map((m, i) => [
+        h('div', { class: 'row nowrap-row' },
+          h('button', { class: 'ghost', text: '↑', disabled: i === 0, title: 'Выше', onclick: () => move(i, i - 1) }),
+          h('button', { class: 'ghost', text: '↓', disabled: i === local.length - 1, title: 'Ниже', onclick: () => move(i, i + 1) })),
+        h('input', { type: 'checkbox', checked: m.enabled, onchange: e => { m.enabled = e.target.checked; dirty(); } }),
+        h('div', {},
+          h('a', { href: 'https://steamcommunity.com/sharedfiles/filedetails/?id=' + enc(m.workshop_id),
+            target: '_blank', rel: 'noopener noreferrer', text: m.title || m.workshop_id }),
+          h('div', { class: 'muted mono small', text: m.workshop_id + (m.paks && m.paks.length ? ' · ' + m.paks.join(', ') : '') })),
+        m.size_bytes ? fmtBytes(m.size_bytes) : '-',
+        isSet(m.latest_updated) ? fmtTime(m.latest_updated) : (isSet(m.installed_updated) ? fmtTime(m.installed_updated) : '-'),
+        statusOf(m),
+        h('div', { class: 'row end' }, h('button', { class: 'danger', text: 'Убрать', onclick: () => {
+          local.splice(i, 1); dirty(); draw();
+        } })),
+      ]), 'Модов нет. Добавьте их по ID или по ссылке из Workshop.', { cls: 'middle' }));
+    };
+
+    const load = async () => {
+      let status;
+      try { status = await api('GET', `/servers/${enc(ctx.id)}/mods`); }
+      catch (e) { replace(box, h('div', { class: 'notice bad', text: e.message })); return; }
+      local = (status.mods || []).map(m => ({ ...m }));
+      save.disabled = true;
+      draw();
+    };
+    // put sends the list as it stands; the array's order is the load order.
+    const put = async () => {
+      const status = await api('PUT', `/servers/${enc(ctx.id)}/mods`,
+        { mods: local.map(m => ({ workshop_id: m.workshop_id, enabled: !!m.enabled })) });
+      local = (status.mods || []).map(m => ({ ...m }));
+      save.disabled = true;
+      draw();
+      return status;
+    };
+
+    const idInput = h('input', { placeholder: 'ID мода или ссылка из Workshop', style: 'min-width:280px;flex:1' });
+    const addMod = async button => act(button, async () => {
+      const raw = idInput.value.trim();
+      if (!raw) return;
+      // The id is pulled out here only to catch a duplicate before the
+      // request; the API accepts a link just as well.
+      const found = /(?:^|[?&]id=|\/)([1-9][0-9]{5,19})(?:$|&)/.exec(raw);
+      const id = found ? found[1] : raw;
+      if (local.some(m => m.workshop_id === id)) { toast('Этот мод уже в списке', 'bad'); return; }
+      local.push({ workshop_id: id, enabled: true, paks: [] });
+      idInput.value = '';
+      try { await put(); toast('Добавлено'); } catch (e) { local.pop(); draw(); throw e; }
+    });
+
+    const collectionInput = h('input', { placeholder: 'ID или ссылка на коллекцию', style: 'min-width:240px;flex:1' });
+    const addCollection = h('button', { text: 'Добавить коллекцию', onclick: e => act(e.target, async () => {
+      const raw = collectionInput.value.trim();
+      if (!raw) return;
+      const status = await api('POST', `/servers/${enc(ctx.id)}/mods/collection`, { collection: raw });
+      local = (status.mods || []).map(m => ({ ...m }));
+      collectionInput.value = '';
+      save.disabled = true;
+      draw();
+      toast('Моды коллекции добавлены');
+    }) });
+
+    // Not act(): it re-enables the button it was given, and this one being
+    // enabled is how the tab says the list has unsaved changes.
+    save.onclick = async () => {
+      save.disabled = true;
+      try { await put(); toast('Список сохранён'); }
+      catch (e) { toast(e.message, 'bad'); save.disabled = false; }
+    };
+
+    const check = h('button', { text: 'Проверить обновления', onclick: e => act(e.target, async () => {
+      const status = await api('POST', `/servers/${enc(ctx.id)}/mods/check`);
+      // A list edited meanwhile is not thrown away by a check.
+      if (save.disabled || sameList(status.mods || [])) { local = (status.mods || []).map(m => ({ ...m })); save.disabled = true; draw(); }
+      toast(status.error ? 'Steam не ответил: ' + status.error
+        : status.pending ? `Нужно установить или обновить: ${status.pending}` : 'Все моды свежие',
+        status.error ? 'bad' : 'ok');
+    }) });
+
+    const install = h('button', { class: 'primary', text: 'Установить и обновить', onclick: e => act(e.target, async () => {
+      if (!save.disabled) { toast('Сначала сохраните список', 'bad'); return; }
+      const running = ['running', 'starting', 'stopping'].includes(ctx.detail.lifecycle.state);
+      if (running && !await ask('Моды нельзя подменить под работающим сервером. Менеджер скачает их, затем предупредит игроков, остановит сервер, поставит моды и запустит его снова. Продолжить?', { ok: 'Обновить моды' })) return;
+      const job = await api('POST', `/servers/${enc(ctx.id)}/mods/install`, { warn: running });
+      openLog(ctx.id, 'steamcmd');
+      await runJob(job);
+      ctx.refresh();
+    }) });
+
+    replace(body, h('div', { class: 'panel' },
+      h('div', { class: 'head' }, h('h2', { text: 'Моды' }), h('span', { class: 'spacer' }), check, install, save),
+      h('p', { class: 'muted small', text: 'Порядок важен: если два мода меняют одно и то же, выигрывает тот, кто ниже. Список сохраняется в modlist.txt и вступает в силу при следующем запуске; у игроков должен быть тот же набор и тот же порядок, иначе они не зайдут.' }),
+      h('div', { class: 'row', style: 'margin-bottom:10px' }, idInput,
+        h('button', { text: 'Добавить мод', onclick: e => addMod(e.target) })),
+      h('div', { class: 'row', style: 'margin-bottom:12px' }, collectionInput, addCollection),
+      box));
+    idInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addMod(null); } });
+    await load();
   },
 
   async schedule(body, ctx) {
@@ -1928,6 +2056,8 @@ const AUDIT_ACTIONS = {
   'DELETE /servers/{}/backups/{}': 'Удаление бэкапа',
   'PUT /servers/{}/config/{}': 'Изменение конфига', 'POST /servers/{}/config/{}/versions/{}/restore': 'Откат конфига',
   'PUT /servers/{}/schedule': 'Расписание', 'DELETE /servers/{}/schedule': 'Удаление расписания',
+  'PUT /servers/{}/mods': 'Список модов', 'POST /servers/{}/mods/install': 'Установка модов',
+  'POST /servers/{}/mods/check': 'Проверка модов', 'POST /servers/{}/mods/collection': 'Добавление коллекции модов',
   'POST /notifications': 'Добавление канала', 'PATCH /notifications/{}': 'Изменение канала', 'PUT /notifications/{}': 'Изменение канала',
   'DELETE /notifications/{}': 'Удаление канала', 'POST /notifications/{}/test': 'Проверка канала',
   'POST /admins': 'Добавление администратора', 'DELETE /admins/{}': 'Удаление администратора', 'PUT /admins/{}/password': 'Смена пароля',

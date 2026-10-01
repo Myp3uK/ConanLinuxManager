@@ -518,6 +518,8 @@ func (a *api) routeServer(w http.ResponseWriter, r *http.Request) {
 		a.scheduleRuns(w, r)
 	case strings.HasSuffix(r.URL.Path, "/schedule"):
 		a.schedule(w, r)
+	case strings.Contains(r.URL.Path, "/mods"):
+		a.mods(w, r)
 	default:
 		a.server(w, r)
 	}
