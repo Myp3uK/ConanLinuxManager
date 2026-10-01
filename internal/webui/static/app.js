@@ -1280,10 +1280,15 @@ const TAB_VIEWS = {
 
   async mods(body, ctx) {
     const box = h('div');
+    const notice = h('div');
     // local is the list being edited. It is written only when saved: putting
-    // every click through the API would leave a version of modlist.txt for
-    // each press of an arrow.
+    // every move through the API would leave a version of modlist.txt for
+    // each one.
     let local = [];
+    // The running server has its mods loaded, so the list can only be edited
+    // while it is stopped; «Проверить обновления» and the install job stay
+    // available, because the job stops the server itself.
+    const editable = () => ctx.detail.lifecycle.state === 'idle';
     const save = h('button', { class: 'primary', text: 'Сохранить', disabled: true });
     const dirty = () => { save.disabled = false; };
     const sameList = saved => saved.length === local.length &&
@@ -1298,18 +1303,51 @@ const TAB_VIEWS = {
       }
       return h('span', { class: 'badge ok', text: 'установлен' });
     };
-    const move = (i, to) => {
-      if (to < 0 || to >= local.length) return;
-      [local[i], local[to]] = [local[to], local[i]];
-      dirty(); draw();
+    // from is the row being dragged; it lives outside draw() because a redraw
+    // during a drag would otherwise lose it.
+    let from = null;
+    // dragRows makes the drawn rows draggable. The handlers go on after the
+    // table is built rather than into the shared table helper, which has no
+    // say over a row's attributes.
+    const dragRows = () => {
+      if (!editable()) return;
+      const rows = Array.from(box.querySelectorAll('tbody tr'));
+      rows.forEach((tr, i) => {
+        tr.draggable = true;
+        tr.addEventListener('dragstart', e => {
+          from = i;
+          e.dataTransfer.effectAllowed = 'move';
+          // Firefox starts no drag at all without data on the transfer.
+          e.dataTransfer.setData('text/plain', String(i));
+          tr.classList.add('dragging');
+        });
+        tr.addEventListener('dragend', () => {
+          from = null;
+          rows.forEach(r => r.classList.remove('dragging', 'drop-here'));
+        });
+        tr.addEventListener('dragover', e => {
+          if (from === null || from === i) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          rows.forEach(r => r.classList.toggle('drop-here', r === tr));
+        });
+        tr.addEventListener('dragleave', () => tr.classList.remove('drop-here'));
+        tr.addEventListener('drop', e => {
+          e.preventDefault();
+          if (from === null || from === i) return;
+          const [moved] = local.splice(from, 1);
+          local.splice(i, 0, moved);
+          from = null;
+          dirty(); draw();
+        });
+      });
     };
 
     const draw = () => {
+      const can = editable();
       replace(box, table(['', 'Вкл.', 'Мод', 'Размер', 'Обновлён в Steam', 'Состояние', ''], local.map((m, i) => [
-        h('div', { class: 'row nowrap-row' },
-          h('button', { class: 'ghost', text: '↑', disabled: i === 0, title: 'Выше', onclick: () => move(i, i - 1) }),
-          h('button', { class: 'ghost', text: '↓', disabled: i === local.length - 1, title: 'Ниже', onclick: () => move(i, i + 1) })),
-        h('input', { type: 'checkbox', checked: m.enabled, onchange: e => { m.enabled = e.target.checked; dirty(); } }),
+        h('span', { class: 'grip', text: '⠿', title: can ? 'Перетащите, чтобы изменить порядок' : '' }),
+        h('input', { type: 'checkbox', checked: m.enabled, disabled: !can, onchange: e => { m.enabled = e.target.checked; dirty(); } }),
         h('div', {},
           h('a', { href: 'https://steamcommunity.com/sharedfiles/filedetails/?id=' + enc(m.workshop_id),
             target: '_blank', rel: 'noopener noreferrer', text: m.title || m.workshop_id }),
@@ -1321,6 +1359,13 @@ const TAB_VIEWS = {
           local.splice(i, 1); dirty(); draw();
         } })),
       ]), 'Модов нет. Добавьте их по ID или по ссылке из Workshop.', { cls: 'middle' }));
+      dragRows();
+      idInput.disabled = collectionInput.disabled = addModButton.disabled = addCollection.disabled = !can;
+      if (!can) save.disabled = true;
+      replace(notice, can ? null : h('div', { class: 'notice' },
+        h('strong', { text: 'Сервер работает. ' }),
+        'Список модов меняется только на остановленном сервере: у работающего моды уже загружены. ' +
+        '«Установить и обновить» доступно - это задание само предупредит игроков и остановит сервер.'));
     };
 
     const load = async () => {
@@ -1378,6 +1423,7 @@ const TAB_VIEWS = {
     });
 
     const collectionInput = h('input', { placeholder: 'ID или ссылка на коллекцию', style: 'min-width:240px;flex:1' });
+    const addModButton = h('button', { text: 'Добавить моды', onclick: e => addMod(e.target) });
     const addCollection = h('button', { text: 'Добавить коллекцию', onclick: e => act(e.target, async () => {
       const raw = collectionInput.value.trim();
       if (!raw) return;
@@ -1418,12 +1464,15 @@ const TAB_VIEWS = {
 
     replace(body, h('div', { class: 'panel' },
       h('div', { class: 'head' }, h('h2', { text: 'Моды' }), h('span', { class: 'spacer' }), check, install, save),
-      h('p', { class: 'muted small', text: 'Порядок важен: если два мода меняют одно и то же, выигрывает тот, кто ниже. Список сохраняется в modlist.txt и вступает в силу при следующем запуске; у игроков должен быть тот же набор и тот же порядок, иначе они не зайдут.' }),
-      h('div', { class: 'row', style: 'margin-bottom:10px' }, idInput,
-        h('button', { text: 'Добавить моды', onclick: e => addMod(e.target) })),
+      h('p', { class: 'muted small', text: 'Порядок важен: если два мода меняют одно и то же, выигрывает тот, кто ниже; перетащите строку за ручку слева и нажмите «Сохранить». Список пишется в modlist.txt и вступает в силу при следующем запуске; у игроков должен быть тот же набор и тот же порядок, иначе они не зайдут.' }),
+      notice,
+      h('div', { class: 'row', style: 'margin-bottom:10px' }, idInput, addModButton),
       h('div', { class: 'row', style: 'margin-bottom:12px' }, collectionInput, addCollection),
       box));
     idInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addMod(null); } });
+    // A stop or a start elsewhere on the page opens or closes the editing.
+    let lastState = ctx.detail.lifecycle.state;
+    ctx.onRefresh = d => { if (d.lifecycle.state !== lastState) { lastState = d.lifecycle.state; draw(); } };
     await load();
   },
 

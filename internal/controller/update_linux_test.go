@@ -12,6 +12,7 @@ import (
 
 	"github.com/example/conan-manager/internal/events"
 	"github.com/example/conan-manager/internal/server"
+	"github.com/example/conan-manager/internal/steamcmd"
 )
 
 // fakeSteam publishes a build and "installs" it by writing the manifest.
@@ -54,8 +55,12 @@ func (f *fakeSteam) UpdateServer(ctx context.Context, dir, install, branch strin
 	return os.WriteFile(filepath.Join(install, "steamapps", "appmanifest_443030.acf"), []byte(manifest), 0o640)
 }
 
-func (f *fakeSteam) DownloadWorkshopItem(_ context.Context, _, contentDir, workshopID string, _ io.Writer) (string, error) {
-	return filepath.Join(contentDir, workshopID), nil
+func (f *fakeSteam) DownloadWorkshopItems(_ context.Context, _, contentDir string, ids []string, _ bool, _ io.Writer) (map[string]steamcmd.WorkshopResult, error) {
+	results := map[string]steamcmd.WorkshopResult{}
+	for _, id := range ids {
+		results[id] = steamcmd.WorkshopResult{Dir: filepath.Join(contentDir, id)}
+	}
+	return results, nil
 }
 
 func waitJob(t *testing.T, c *Controller, id string) Job {

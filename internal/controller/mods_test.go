@@ -14,6 +14,7 @@ import (
 
 	"github.com/example/conan-manager/internal/mods"
 	"github.com/example/conan-manager/internal/server"
+	"github.com/example/conan-manager/internal/steamcmd"
 )
 
 // fakeWorkshop answers for Steam's Workshop API.
@@ -59,26 +60,37 @@ type workshopSteam struct {
 	updated   map[string]int64
 	fail      map[string]error
 	downloads []string
+	runs      int
+	validated bool
 }
 
-func (s *workshopSteam) DownloadWorkshopItem(_ context.Context, _, contentDir, workshopID string, out io.Writer) (string, error) {
+// runs counts the invocations, which is the whole point of batching: the
+// number of mods must not decide how many times SteamCMD starts.
+func (s *workshopSteam) DownloadWorkshopItems(_ context.Context, _, contentDir string, ids []string, validate bool, out io.Writer) (map[string]steamcmd.WorkshopResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.downloads = append(s.downloads, workshopID)
-	fmt.Fprintf(out, "Downloading item %s ...\n", workshopID)
-	if err := s.fail[workshopID]; err != nil {
-		return "", err
-	}
-	dir := filepath.Join(contentDir, "steamapps", "workshop", "content", "440900", workshopID)
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", err
-	}
-	for _, pak := range s.paks[workshopID] {
-		if err := os.WriteFile(filepath.Join(dir, pak), []byte(pak), 0o640); err != nil {
-			return "", err
+	s.runs++
+	s.validated = validate
+	results := map[string]steamcmd.WorkshopResult{}
+	for _, id := range ids {
+		s.downloads = append(s.downloads, id)
+		fmt.Fprintf(out, "Downloading item %s ...\n", id)
+		if err := s.fail[id]; err != nil {
+			results[id] = steamcmd.WorkshopResult{Reason: err.Error()}
+			continue
 		}
+		dir := filepath.Join(contentDir, "steamapps", "workshop", "content", "440900", id)
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return results, err
+		}
+		for _, pak := range s.paks[id] {
+			if err := os.WriteFile(filepath.Join(dir, pak), []byte(pak), 0o640); err != nil {
+				return results, err
+			}
+		}
+		results[id] = steamcmd.WorkshopResult{Dir: dir}
 	}
-	return dir, s.writeManifest(contentDir)
+	return results, s.writeManifest(contentDir)
 }
 
 // writeManifest writes the appworkshop_440900.acf SteamCMD keeps, which is
@@ -479,5 +491,84 @@ func TestNoModsLeavesNoModList(t *testing.T) {
 	// something about mods on a server that has none.
 	if _, err := os.Stat(mods.ListPath(cfg)); !os.IsNotExist(err) {
 		t.Errorf("modlist.txt created for a server without mods: %v", err)
+	}
+}
+
+func TestModsJobStartsSteamCMDOnceForTheWholeList(t *testing.T) {
+	c, cfg, steam, shop := modsController(t)
+	ctx := context.Background()
+	list := make([]server.Mod, 0, 6)
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprint(111111 + i)
+		steam.paks[id] = []string{"Mod" + id + ".pak"}
+		steam.updated[id] = 1700000000
+		shop.details[id] = mods.ItemDetails{WorkshopID: id, Title: "Mod " + id, AppID: mods.GameAppID,
+			Updated: time.Unix(1700000000, 0).UTC()}
+		list = append(list, server.Mod{WorkshopID: id, Enabled: true})
+	}
+	if _, err := c.SetMods(ctx, cfg.ID, list); err != nil {
+		t.Fatal(err)
+	}
+	if job := waitModsJob(t, c, startMods(t, c, cfg.ID)); job.Status != "completed" {
+		t.Fatalf("job: %+v", job)
+	}
+	steam.mu.Lock()
+	runs, downloads, validated := steam.runs, len(steam.downloads), steam.validated
+	steam.mu.Unlock()
+	// Starting SteamCMD costs more than most mods take to download, so six
+	// mods must still be one run.
+	if runs != 1 {
+		t.Errorf("SteamCMD started %d times for %d mods; want 1", runs, downloads)
+	}
+	if downloads != 6 {
+		t.Errorf("downloaded %d of 6 mods", downloads)
+	}
+	if validated {
+		t.Error("a plain run should not re-validate every file")
+	}
+}
+
+func TestForcedModsRunValidatesFiles(t *testing.T) {
+	c, cfg, steam, _ := modsController(t)
+	ctx := context.Background()
+	if _, err := c.SetMods(ctx, cfg.ID, []server.Mod{{WorkshopID: "111111", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := c.ModsJob(ctx, cfg.ID, ModsOptions{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job = waitModsJob(t, c, job.ID); job.Status != "completed" {
+		t.Fatalf("job: %+v", job)
+	}
+	steam.mu.Lock()
+	defer steam.mu.Unlock()
+	// Force is the repair, so it re-checks the files against Steam.
+	if !steam.validated {
+		t.Error("a forced run should validate")
+	}
+}
+
+func TestSetModsRefusesARunningServer(t *testing.T) {
+	c, cfg, _, _ := modsController(t)
+	ctx := context.Background()
+	if _, err := c.SetMods(ctx, cfg.ID, []server.Mod{{WorkshopID: "111111", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.acquire(ctx, cfg.ID, "running"); err != nil {
+		t.Fatal(err)
+	}
+	defer c.release(cfg.ID)
+	// A running server has its mods loaded: a list changed under it would
+	// describe something other than what is in play.
+	if _, err := c.SetMods(ctx, cfg.ID, []server.Mod{{WorkshopID: "222222", Enabled: true}}); err == nil {
+		t.Fatal("the list was changed on a running server")
+	}
+	list, err := c.Mods(ctx, cfg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].WorkshopID != "111111" {
+		t.Fatalf("the list changed anyway: %+v", list)
 	}
 }

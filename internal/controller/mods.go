@@ -61,6 +61,13 @@ func (c *Controller) SetMods(ctx context.Context, id string, list []server.Mod) 
 	if err != nil {
 		return nil, err
 	}
+	// The running server has its mods loaded: a list changed under it would
+	// describe something other than what is in play, and the files cannot be
+	// swapped anyway. Installing mods is the operation that stops the server
+	// itself; editing the list is not.
+	if state := c.Lifecycle(id).State; state != "idle" {
+		return nil, fmt.Errorf("stop the server first: it is %s, and its mods are loaded until it stops", state)
+	}
 	for i := range list {
 		parsed, err := server.ParseWorkshopID(list[i].WorkshopID)
 		if err != nil {
@@ -216,7 +223,9 @@ func (c *Controller) runMods(ctx context.Context, cfg server.Config, opts ModsOp
 	// Downloading first, while the server still serves players, is what keeps
 	// the stop to the length of a file copy: SteamCMD writes into the shared
 	// cache, which no running server reads.
-	arrived, failures := c.downloadMods(ctx, cfg, wanted)
+	// Force is the repair: it re-checks every file against Steam, which is
+	// what the game's own launcher does on each mod every time.
+	arrived, failures := c.downloadMods(ctx, cfg, wanted, opts.Force)
 	if len(arrived) == 0 {
 		err := errors.New(strings.Join(failures, "; "))
 		c.emit(events.UpdateFailed, cfg, "No mod could be downloaded", modDetails(wanted, map[string]string{"error": err.Error()}))
@@ -270,25 +279,43 @@ func modsOf(arrived []downloaded) []server.Mod {
 	return list
 }
 
-// downloadMods fetches each mod into the shared cache and returns those that
-// arrived. One mod Steam will not serve must not stop the others: a modpack
-// whose tenth item was taken down still has nine that work.
-func (c *Controller) downloadMods(ctx context.Context, cfg server.Config, wanted []server.Mod) ([]downloaded, []string) {
-	cache := c.workshopDir(cfg)
+// downloadMods fetches the mods into the shared cache and returns those that
+// arrived. They go to SteamCMD in one command line rather than one run each:
+// starting SteamCMD costs more than most mods take to download, so forty mods
+// run separately would spend most of their time starting up.
+//
+// One mod Steam will not serve must not stop the others: a modpack whose tenth
+// item was taken down still has nine that work.
+func (c *Controller) downloadMods(ctx context.Context, cfg server.Config, wanted []server.Mod, validate bool) ([]downloaded, []string) {
 	out := openSteamLog(cfg, "mods")
 	defer out.Close()
+	ids := make([]string, 0, len(wanted))
+	for _, m := range wanted {
+		ids = append(ids, m.WorkshopID)
+	}
+	fmt.Fprintf(out, "\n=== conan-manager: %d mod(s): %s ===\n", len(ids), strings.Join(ids, " "))
+	results, err := c.Steam.DownloadWorkshopItems(ctx, cfg.SteamCMDDir, c.workshopDir(cfg), ids, validate, out)
+	if err != nil {
+		c.Logger.Warn("mod download failed", "server", cfg.ID, "error", err)
+	}
 	done := make([]downloaded, 0, len(wanted))
 	var failures []string
 	for _, m := range wanted {
-		fmt.Fprintf(out, "\n=== conan-manager: mod %s (%s) ===\n", m.WorkshopID, modName(m))
-		dir, err := c.Steam.DownloadWorkshopItem(ctx, cfg.SteamCMDDir, cache, m.WorkshopID, out)
-		if err != nil {
-			_ = c.Repo.MarkModFailed(ctx, cfg.ID, m.WorkshopID, err.Error())
-			failures = append(failures, modName(m)+": "+err.Error())
-			c.Logger.Warn("mod download failed", "server", cfg.ID, "mod", m.WorkshopID, "error", err)
+		result, known := results[m.WorkshopID]
+		if !known || result.Dir == "" {
+			reason := result.Reason
+			if reason == "" && err != nil {
+				reason = err.Error()
+			}
+			if reason == "" {
+				reason = "SteamCMD did not download this mod"
+			}
+			_ = c.Repo.MarkModFailed(ctx, cfg.ID, m.WorkshopID, reason)
+			failures = append(failures, modName(m)+": "+reason)
+			c.Logger.Warn("mod not downloaded", "server", cfg.ID, "mod", m.WorkshopID, "reason", reason)
 			continue
 		}
-		done = append(done, downloaded{mod: m, dir: dir})
+		done = append(done, downloaded{mod: m, dir: result.Dir})
 	}
 	return done, failures
 }

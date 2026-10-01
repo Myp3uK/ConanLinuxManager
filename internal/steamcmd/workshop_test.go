@@ -7,7 +7,7 @@ import (
 )
 
 func TestWorkshopArgsForceWindowsPlatform(t *testing.T) {
-	args := strings.Join(workshopArgs("/var/lib/conan-manager/workshop", "1159180273"), " ")
+	args := strings.Join(workshopArgs("/var/lib/conan-manager/workshop", []string{"1159180273"}, false), " ")
 	// Without the platform override SteamCMD on Linux is told the item has no
 	// content, so this is the one argument the download cannot work without.
 	if !strings.Contains(args, "+@sSteamCmdForcePlatformType windows") {

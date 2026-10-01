@@ -13,6 +13,7 @@ import (
 
 	"github.com/example/conan-manager/internal/events"
 	"github.com/example/conan-manager/internal/server"
+	"github.com/example/conan-manager/internal/steamcmd"
 )
 
 // scriptedSteam prints like SteamCMD and fails when told to.
@@ -34,8 +35,12 @@ func (scriptedSteam) UpdateServer(context.Context, string, string, string, bool,
 	return nil
 }
 
-func (scriptedSteam) DownloadWorkshopItem(_ context.Context, _, contentDir, workshopID string, _ io.Writer) (string, error) {
-	return contentDir + "/" + workshopID, nil
+func (scriptedSteam) DownloadWorkshopItems(_ context.Context, _, contentDir string, ids []string, _ bool, _ io.Writer) (map[string]steamcmd.WorkshopResult, error) {
+	results := map[string]steamcmd.WorkshopResult{}
+	for _, id := range ids {
+		results[id] = steamcmd.WorkshopResult{Dir: contentDir + "/" + id}
+	}
+	return results, nil
 }
 
 func waitInstall(t *testing.T, c *Controller, id string) Job {

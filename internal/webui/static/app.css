@@ -270,3 +270,9 @@ body.locked > header.top, body.locked > main { display: none; }
 .check-row { display: flex; align-items: center; gap: 10px; cursor: pointer; }
 .check-row > input { flex: none; }
 .check-row > span { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+
+/* Mod list: rows are dragged to set the load order. */
+.grip { cursor: grab; color: var(--idle); user-select: none; letter-spacing: 1px; }
+tr[draggable="true"] { cursor: grab; }
+tr.dragging { opacity: .45; }
+tr.drop-here > td { border-top: 2px solid var(--accent); }

@@ -126,7 +126,7 @@ type Steam interface {
 	InstallServer(ctx context.Context, cfg server.Config, output io.Writer) error
 	LatestBuild(ctx context.Context, steamcmdDir, branch string) (string, error)
 	UpdateServer(ctx context.Context, steamcmdDir, installDir, branch string, validate bool, output io.Writer) error
-	DownloadWorkshopItem(ctx context.Context, steamcmdDir, contentDir, workshopID string, output io.Writer) (string, error)
+	DownloadWorkshopItems(ctx context.Context, steamcmdDir, contentDir string, ids []string, validate bool, output io.Writer) (map[string]steamcmd.WorkshopResult, error)
 }
 
 // Workshop is the part of Steam's Workshop API the controller uses.
