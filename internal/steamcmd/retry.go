@@ -54,9 +54,22 @@ func runUpdate(ctx context.Context, binary, dir string, args []string, output io
 	return err
 }
 
-// transient tells failures that a second run fixes.
+// transient tells failures that a second run fixes. Workshop downloads fail
+// with a bare "(Failure)" often enough that not retrying them would make
+// installing a dozen mods a matter of luck, but a refusal to serve the item at
+// all is settled and retrying only delays the report.
 func transient(reason string) bool {
-	return strings.Contains(reason, "Missing configuration")
+	for _, settled := range []string{"Access Denied", "No subscription", "Invalid Platform", "File Not Found", "Disk write failure"} {
+		if strings.Contains(reason, settled) {
+			return false
+		}
+	}
+	for _, retryable := range []string{"Missing configuration", "(Failure)", "Timeout", "Connection"} {
+		if strings.Contains(reason, retryable) {
+			return true
+		}
+	}
+	return false
 }
 
 // steamError picks SteamCMD's last error line, such as
