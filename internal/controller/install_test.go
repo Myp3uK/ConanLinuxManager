@@ -34,6 +34,10 @@ func (scriptedSteam) UpdateServer(context.Context, string, string, string, bool,
 	return nil
 }
 
+func (scriptedSteam) DownloadWorkshopItem(_ context.Context, _, contentDir, workshopID string, _ io.Writer) (string, error) {
+	return contentDir + "/" + workshopID, nil
+}
+
 func waitInstall(t *testing.T, c *Controller, id string) Job {
 	t.Helper()
 	var job Job

@@ -121,6 +121,12 @@ func Apply(cfg server.Config, list []server.Mod) (previous string, changed bool,
 	if string(current) == wanted {
 		return string(current), false, nil
 	}
+	// A server with no mods gets no file: an empty modlist.txt where there was
+	// none would be the manager telling the game something about mods on a
+	// server that has none.
+	if wanted == "" && os.IsNotExist(err) {
+		return "", false, nil
+	}
 	if err := os.MkdirAll(Dir(cfg), 0o750); err != nil {
 		return string(current), false, err
 	}

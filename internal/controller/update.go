@@ -198,6 +198,24 @@ func (c *Controller) updateBeforeStart(ctx context.Context, id string) {
 		return
 	}
 	defer c.endUpdate(id)
+	c.buildBeforeStart(ctx, cfg)
+	// Mods go in at the same moment as a new build, under the same
+	// reservation: one switch covers both. A build that was up to date, or one
+	// whose update failed, does not keep the mods from being brought up.
+	c.modsBeforeStart(ctx, cfg)
+}
+
+// modsBeforeStart installs the mods a server is missing and those that changed
+// on Steam. The server is idle here, so nothing is stopped or started; a
+// failure leaves the mods as they are and the server starts on them.
+func (c *Controller) modsBeforeStart(ctx context.Context, cfg server.Config) {
+	if _, err := c.runMods(ctx, cfg, ModsOptions{}); err != nil {
+		c.Logger.Warn("mods not updated before the start", "server", cfg.ID, "error", err)
+	}
+}
+
+func (c *Controller) buildBeforeStart(ctx context.Context, cfg server.Config) {
+	id := cfg.ID
 	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	status, err := c.CheckUpdate(checkCtx, id)
 	cancel()
@@ -304,26 +322,28 @@ func (c *Controller) WatchUpdates(ctx context.Context, interval time.Duration) {
 		}
 		for _, cfg := range configs {
 			status, err := c.CheckUpdate(ctx, cfg.ID)
-			if err != nil || status.Error != "" || !status.Available || status.Latest == "" {
-				if status.Error != "" {
-					c.Logger.Warn("update check failed", "server", cfg.ID, "error", status.Error)
-				}
-				continue
+			if status.Error != "" {
+				c.Logger.Warn("update check failed", "server", cfg.ID, "error", status.Error)
 			}
 			running := c.Lifecycle(cfg.ID).State == "running"
-			switch {
-			case cfg.AutoUpdate && running:
-				c.updateSoon(ctx, cfg, status.Latest)
-			case cfg.AutoUpdate:
-				// Nobody plays on a stopped server: it is updated right away.
-				if c.Lifecycle(cfg.ID).State == "idle" {
-					if _, err := c.UpdateJob(ctx, cfg.ID, UpdateOptions{}); err != nil {
-						c.Logger.Info("automatic update not started", "server", cfg.ID, "error", err)
+			if err == nil && status.Error == "" && status.Available && status.Latest != "" {
+				switch {
+				case cfg.AutoUpdate && running:
+					c.updateSoon(ctx, cfg, status.Latest)
+				case cfg.AutoUpdate:
+					// Nobody plays on a stopped server: it is updated right away.
+					if c.Lifecycle(cfg.ID).State == "idle" {
+						if _, err := c.UpdateJob(ctx, cfg.ID, UpdateOptions{}); err != nil {
+							c.Logger.Info("automatic update not started", "server", cfg.ID, "error", err)
+						}
 					}
+				case c.noteUpdate(cfg.ID, status.Latest):
+					c.announceUpdate(ctx, cfg, updateVars(status.Latest), running)
 				}
-			case c.noteUpdate(cfg.ID, status.Latest):
-				c.announceUpdate(ctx, cfg, updateVars(status.Latest), running)
 			}
+			// A build that is current, or that could not be checked, says
+			// nothing about the mods, so they are checked either way.
+			c.watchMods(ctx, cfg, running)
 		}
 	}
 	timer := time.NewTimer(time.Minute)
@@ -348,8 +368,13 @@ func (c *Controller) updateSoon(ctx context.Context, cfg server.Config, build st
 	if !c.noteUpdate(cfg.ID, build) {
 		return
 	}
-	vars := updateVars(build)
-	p, err := c.planRestart(ctx, cfg, server.PendingUpdate, build)
+	c.announceSoon(ctx, cfg, updateVars(build), build)
+}
+
+// announceSoon announces what is waiting and sets the restart that installs it.
+// Builds and mods share it: to a player they are the same interruption.
+func (c *Controller) announceSoon(ctx context.Context, cfg server.Config, vars map[string]string, detail string) {
+	p, err := c.planRestart(ctx, cfg, server.PendingUpdate, detail)
 	var sooner ErrPlannedSooner
 	switch {
 	case err == nil:

@@ -23,6 +23,9 @@ type Config struct {
 	BackupDir string
 	// BackupKeep is how many manager backups each server keeps; 0 keeps all.
 	BackupKeep int
+	// WorkshopDir caches downloaded mods for every server, so a mod two
+	// servers run is downloaded once.
+	WorkshopDir string
 	// NotifyProxy carries outgoing notifications (http://, https:// or
 	// socks5://) where the host cannot reach Discord directly.
 	NotifyProxy  string
@@ -118,6 +121,7 @@ func LoadFrom(lookup func(string) string) Config {
 		UpdateCheckInterval: r.updateInterval(),
 		BackupRetention:     r.integer("CONAN_MANAGER_BACKUP_RETENTION", 10),
 		BackupDir:           r.env("CONAN_MANAGER_BACKUP_DIR", "/var/lib/conan-manager/backups"),
+		WorkshopDir:         r.env("CONAN_MANAGER_WORKSHOP_DIR", "/var/lib/conan-manager/workshop"),
 		BackupKeep:          r.integer("CONAN_MANAGER_BACKUP_KEEP", 20),
 		NotifyProxy:         r.env("CONAN_MANAGER_NOTIFY_PROXY", ""),
 		QueryHost:           r.env("CONAN_MANAGER_QUERY_HOST", "127.0.0.1"),

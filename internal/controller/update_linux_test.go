@@ -54,6 +54,10 @@ func (f *fakeSteam) UpdateServer(ctx context.Context, dir, install, branch strin
 	return os.WriteFile(filepath.Join(install, "steamapps", "appmanifest_443030.acf"), []byte(manifest), 0o640)
 }
 
+func (f *fakeSteam) DownloadWorkshopItem(_ context.Context, _, contentDir, workshopID string, _ io.Writer) (string, error) {
+	return filepath.Join(contentDir, workshopID), nil
+}
+
 func waitJob(t *testing.T, c *Controller, id string) Job {
 	t.Helper()
 	var job Job

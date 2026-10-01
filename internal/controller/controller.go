@@ -20,6 +20,7 @@ import (
 	"github.com/example/conan-manager/internal/hooks"
 	"github.com/example/conan-manager/internal/launchservice"
 	"github.com/example/conan-manager/internal/logreader"
+	"github.com/example/conan-manager/internal/mods"
 	"github.com/example/conan-manager/internal/process"
 	"github.com/example/conan-manager/internal/ramstate"
 	"github.com/example/conan-manager/internal/scheduler"
@@ -34,15 +35,22 @@ type Controller struct {
 	// opLocks serialise start, stop and kill per server. They used to be one
 	// global mutex, so a slow hook or save on one server held up every other.
 	// Servers that share directories are kept apart by reservations instead.
-	opLocksMu    sync.Mutex
-	opLocks      map[string]*sync.Mutex
-	Repo         *server.Repository
-	Processes    *process.Manager
-	Launcher     *launchservice.Manager
-	Logs         logreader.Reader
-	Tmpfs        tmpfs.Manager
-	RAM          ramstate.Manager
-	Steam        Steam
+	opLocksMu sync.Mutex
+	opLocks   map[string]*sync.Mutex
+	Repo      *server.Repository
+	Processes *process.Manager
+	Launcher  *launchservice.Manager
+	Logs      logreader.Reader
+	Tmpfs     tmpfs.Manager
+	RAM       ramstate.Manager
+	Steam     Steam
+	// Workshop asks Steam about mods: their names, their update times and the
+	// contents of a collection. Tests replace it.
+	Workshop Workshop
+	// WorkshopDir is the shared mod download cache. Sharing it across servers
+	// means a mod two servers run is downloaded once. Empty puts the cache
+	// beside each server's own SteamCMD.
+	WorkshopDir  string
 	Logger       *slog.Logger
 	jobs         map[string]Job
 	rconMu       sync.Mutex
@@ -118,6 +126,13 @@ type Steam interface {
 	InstallServer(ctx context.Context, cfg server.Config, output io.Writer) error
 	LatestBuild(ctx context.Context, steamcmdDir, branch string) (string, error)
 	UpdateServer(ctx context.Context, steamcmdDir, installDir, branch string, validate bool, output io.Writer) error
+	DownloadWorkshopItem(ctx context.Context, steamcmdDir, contentDir, workshopID string, output io.Writer) (string, error)
+}
+
+// Workshop is the part of Steam's Workshop API the controller uses.
+type Workshop interface {
+	Details(ctx context.Context, ids []string) (map[string]mods.ItemDetails, error)
+	Collection(ctx context.Context, id string) ([]string, error)
 }
 
 type Job struct {
@@ -135,6 +150,7 @@ func New(repo *server.Repository) *Controller {
 		Repo:                repo,
 		Processes:           process.NewManager(),
 		Steam:               steamcmd.Service{},
+		Workshop:            mods.Client{},
 		Logger:              slog.New(slog.DiscardHandler),
 		jobs:                make(map[string]Job),
 		opLocks:             make(map[string]*sync.Mutex),

@@ -70,6 +70,7 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	control.BackupRetention = cfg.BackupRetention
 	control.BackupDir = cfg.BackupDir
 	control.BackupKeep = cfg.BackupKeep
+	control.WorkshopDir = cfg.WorkshopDir
 	control.Events = events.NewBus()
 	history := eventlog.New(db.DB())
 	control.Events.Subscribe("history", func(e events.Event) {
