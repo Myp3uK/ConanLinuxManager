@@ -180,8 +180,7 @@ button.primary[data-preset] { border-color: var(--accent); box-shadow: 0 0 0 1px
 .tile-sub { color: var(--muted); font-size: 12.5px; }
 svg.spark { width: 100%; height: 28px; margin-top: 6px; }
 svg.spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.category-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 4px 32px; margin-bottom: 8px; }
-.category-group h3 { margin-top: 4px; display: flex; align-items: center; gap: 6px; }
+.category-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 4px 32px; margin-bottom: 8px; }
 .event-item .help { margin-left: auto; }
 h2.row { gap: 10px; }
 .rcon-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 420px); gap: 16px; min-height: 0; }

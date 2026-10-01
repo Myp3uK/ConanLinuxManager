@@ -1832,7 +1832,6 @@ const DEFAULT_BODY = `{
   "details": {details}
 }`;
 
-const AUDIENCES = [['players', 'Для игроков', 'Можно направить в общий канал сервера. Тексты задаются у каждого сервера: «Настройки» → «Оповещения».'], ['admins', 'Для админов', 'Технические сообщения; упоминание роли ставится только к ним.']];
 
 async function viewNotifications() {
   const listBox = h('div');
@@ -1906,7 +1905,7 @@ async function viewNotifications() {
       const json = h('textarea', { class: 'mono', rows: 6, spellcheck: 'false', placeholder: '{"content": "{text}"}' });
       json.value = st.body || '';
       where = [field('Webhook URL', url, 'В Discord: настройки канала → Интеграции → Вебхуки → Новый вебхук → «Копировать URL веб-хука».\nАдрес хранится зашифрованным и дальше показывается замаскированным.')];
-      extra = [field('Упоминание при падении', mention, 'Кого позвать, когда сервер упал или нужно вмешательство. К сообщениям для игроков упоминание не ставится.\nРоль: <@&ID роли>, человек: <@ID>, или @here.\nID роли: Discord → Настройки сервера → Роли → ПКМ по роли → «Копировать ID» (нужен режим разработчика).')];
+      extra = [field('Упоминание роли или пользователя', mention, 'Роль: <@&ID роли>, человек: <@ID>, или @here.')];
       extra.push(field('Свой JSON', json, 'Пусто - в канал уходит только текст сообщения из настроек сервера («Настройки» → «Оповещения»).\nСвой JSON - тело запроса к вебхуку целиком, например с embeds: {"content": "{mention} {text}", "embeds": [{"title": "{server}", "description": "{log}"}]}.\nПеременные: {text}, {title}, {server}, {server_id}, {event}, {kind}, {severity}, {time}, {mention} - упоминание (только у ошибок), {log} - строки из лога игры при падении, {details} - все поля объектом. Переменные пишутся внутри кавычек, кроме {details}.'));
       collect = body => { if (url.value.trim()) body.webhook_url = url.value.trim(); body.mention = mention.value.trim(); body.settings = { body: json.value }; };
     } else if (kind === 'telegram') {
@@ -1949,14 +1948,16 @@ async function viewNotifications() {
       };
     }
 
+    // A new channel starts on the messages meant for players; crashes and
+    // technical notices are ticked by whoever wants them.
     const selected = channel ? channelCategories(c, cats) : cats.filter(x => x.audience === 'players').map(x => x.key);
     const boxes = {};
-    const columns = AUDIENCES.map(([audience, title, note]) => h('div', { class: 'category-group' },
-      h('h3', {}, title, ' ', helpIcon(note)),
-      cats.filter(x => x.audience === audience).map(x => {
-        boxes[x.key] = h('input', { type: 'checkbox', checked: selected.includes(x.key) });
-        return h('label', { class: 'row event-item' }, boxes[x.key], h('span', { text: x.title }), helpIcon(x.help));
-      })));
+    // One list, not one per audience: the grid wraps it into columns so ten
+    // messages do not become a tall ladder.
+    const columns = cats.map(x => {
+      boxes[x.key] = h('input', { type: 'checkbox', checked: selected.includes(x.key) });
+      return h('label', { class: 'row event-item' }, boxes[x.key], h('span', { text: x.title }), helpIcon(x.help));
+    });
     const kindSwitch = channel ? null : h('div', { class: 'row kind-switch' }, Object.entries(KIND_NAMES).map(([k, t]) =>
       h('button', { class: k === kind ? 'primary' : '', text: t, onclick: () => showForm(null, k) })));
 
@@ -1965,12 +1966,12 @@ async function viewNotifications() {
       h('h3', { text: '1. Куда писать' }),
       h('div', { class: 'form' }, where,
         field('Название', name, 'Для себя: чтобы отличать каналы в этом списке.'),
-        field('Серверы', server, 'От каких серверов присылать сообщения. «Все серверы» включает и те, что появятся позже.')),
+        field('Серверы', server, 'От каких серверов присылать сообщения.')),
       h('h3', { text: '2. Что присылать' }),
       h('div', { class: 'category-groups' }, columns),
       h('h3', { text: '3. Оформление' }),
       h('div', { class: 'form' }, extra,
-        field('Язык сообщений', language, 'Язык заголовков событий без своего текста (например, «Бэкап готов»). Тексты оповещений - те, что заданы у сервера.'),
+        field('Язык сообщений', language, 'Для заголовков, которые менеджер пишет сам.'),
         field('Включён', enabled)),
       h('div', { class: 'row end', style: 'margin-top:14px' },
         h('button', { class: 'ghost', text: 'Отмена', onclick: () => replace(formBox) }),
@@ -1996,7 +1997,7 @@ async function viewNotifications() {
   replace(app,
     h('div', { class: 'head' }, h('h1', { text: 'Уведомления' }),
       h('button', { class: 'primary', text: '+ Добавить канал', onclick: () => showForm(null, 'discord') })),
-    h('p', { class: 'muted small' }, 'Канал - это куда менеджер пишет: Discord-канал (вебхук), чат Telegram (бот) или свой адрес (HTTP-запрос с вашими заголовками и телом). Обычно заводят два: для игроков (рестарты, обновления, запуск) и для админов (падения). Тексты сообщений задаются у каждого сервера: «Настройки» → «Оповещения». Если хост не видит Discord или Telegram, укажите прокси на странице ', h('a', { href: '#/panel', text: 'Панель' }), '.'),
+    h('p', { class: 'muted small', text: 'Настройка канала, куда менеджер будет отправлять уведомления.' }),
     formBox, listBox);
   await draw();
 }
