@@ -1341,18 +1341,40 @@ const TAB_VIEWS = {
       return status;
     };
 
-    const idInput = h('input', { placeholder: 'ID мода или ссылка из Workshop', style: 'min-width:280px;flex:1' });
+    // parseModIds reads what an operator has at hand: one id, one link, or a
+    // whole list of either separated by commas, spaces or new lines, which is
+    // how mod lists are passed around. What it cannot read is returned so it
+    // can be named rather than silently dropped.
+    const parseModIds = raw => {
+      const ids = [], bad = [];
+      for (const piece of raw.split(/[\s,;]+/)) {
+        const part = piece.trim();
+        if (!part) continue;
+        const found = /(?:[?&]id=|^|\/)([1-9][0-9]{5,19})(?:$|&|$)/.exec(part);
+        if (found) ids.push(found[1]); else bad.push(part);
+      }
+      return { ids, bad };
+    };
+    const idInput = h('input', { placeholder: 'ID или ссылка; можно списком через запятую', style: 'min-width:280px;flex:1' });
     const addMod = async button => act(button, async () => {
       const raw = idInput.value.trim();
       if (!raw) return;
-      // The id is pulled out here only to catch a duplicate before the
-      // request; the API accepts a link just as well.
-      const found = /(?:^|[?&]id=|\/)([1-9][0-9]{5,19})(?:$|&)/.exec(raw);
-      const id = found ? found[1] : raw;
-      if (local.some(m => m.workshop_id === id)) { toast('Этот мод уже в списке', 'bad'); return; }
-      local.push({ workshop_id: id, enabled: true, paks: [] });
+      const { ids, bad } = parseModIds(raw);
+      if (!ids.length) { toast(`Не похоже на ID или ссылку: ${bad.join(', ')}`, 'bad'); return; }
+      const before = local.length;
+      let known = 0;
+      for (const id of ids) {
+        if (local.some(m => m.workshop_id === id)) { known++; continue; }
+        local.push({ workshop_id: id, enabled: true, paks: [] });
+      }
+      const added = local.length - before;
+      if (!added) { toast(known === 1 ? 'Этот мод уже в списке' : 'Все эти моды уже в списке', 'bad'); return; }
       idInput.value = '';
-      try { await put(); toast('Добавлено'); } catch (e) { local.pop(); draw(); throw e; }
+      try { await put(); } catch (e) { local.length = before; draw(); throw e; }
+      const notes = [added === 1 ? 'Добавлен 1 мод' : `Добавлено модов: ${added}`];
+      if (known) notes.push(`уже были: ${known}`);
+      if (bad.length) notes.push(`не распознано: ${bad.join(', ')}`);
+      toast(notes.join(', '), bad.length ? 'bad' : 'ok');
     });
 
     const collectionInput = h('input', { placeholder: 'ID или ссылка на коллекцию', style: 'min-width:240px;flex:1' });
@@ -1398,7 +1420,7 @@ const TAB_VIEWS = {
       h('div', { class: 'head' }, h('h2', { text: 'Моды' }), h('span', { class: 'spacer' }), check, install, save),
       h('p', { class: 'muted small', text: 'Порядок важен: если два мода меняют одно и то же, выигрывает тот, кто ниже. Список сохраняется в modlist.txt и вступает в силу при следующем запуске; у игроков должен быть тот же набор и тот же порядок, иначе они не зайдут.' }),
       h('div', { class: 'row', style: 'margin-bottom:10px' }, idInput,
-        h('button', { text: 'Добавить мод', onclick: e => addMod(e.target) })),
+        h('button', { text: 'Добавить моды', onclick: e => addMod(e.target) })),
       h('div', { class: 'row', style: 'margin-bottom:12px' }, collectionInput, addCollection),
       box));
     idInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addMod(null); } });
