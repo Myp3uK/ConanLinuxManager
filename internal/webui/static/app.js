@@ -759,7 +759,7 @@ function hooksHelp(info) {
 const REGIONS = [['0', 'Европа'], ['1', 'Северная Америка'], ['2', 'Азия'], ['3', 'Австралия'], ['4', 'Южная Америка'], ['5', 'Япония']];
 const GAME_FIELDS = [
   { file: 'Engine', section: 'OnlineSubsystem', key: 'ServerName', label: 'Название в списке серверов', def: '' },
-  { file: 'ServerSettings', section: 'ServerSettings', key: 'ServerPassword', label: 'Пароль для входа', type: 'password', def: '', hint: 'Пусто - вход без пароля.' },
+  { file: 'ServerSettings', section: 'ServerSettings', key: 'ServerPassword', label: 'Пароль для входа', type: 'password', def: '' },
   { file: 'ServerSettings', section: 'ServerSettings', key: 'AdminPassword', label: 'Пароль администратора', type: 'password', def: '' },
   { file: 'Game', section: '/Script/Engine.GameSession', key: 'MaxPlayers', label: 'Максимум игроков', type: 'number', def: '40' },
   { file: 'ServerSettings', section: 'ServerSettings', key: 'serverRegion', label: 'Регион', options: REGIONS, def: '0' },
@@ -826,7 +826,7 @@ function gameSettings(ctx, running, reload, views) {
   }) });
   return h('div', {}, h('h2', { text: 'Настройки игры' }),
     running ? h('div', { class: 'notice', text: 'Сервер работает: Изменение настроек заблокирован, сначала выключите сервер.' })
-      : h('p', { class: 'muted small', text: 'Хранятся в INI-файлах игры (вкладка «Конфиги»), вступают в силу при следующем запуске.' }),
+      : h('p', { class: 'muted small', text: 'Основные настройки сервера' }),
     h('div', { class: 'form' }, rows),
     h('div', { class: 'row end', style: 'margin-top:8px' }, save));
 }
@@ -1202,8 +1202,8 @@ const TAB_VIEWS = {
       if (file !== 'logs' && !files.some(f => f.name === file)) file = 'ServerSettings';
       const addFile = h('button', { class: 'ghost', text: '+ Свой файл', title: 'Добавить конфиг',
         disabled: running, onclick: e => act(e.target, async () => {
-          const name = h('input', { placeholder: 'ModHttp.ini', style: 'width:100%' });
-          if (!await ask('Имя файла - то, под которым его ищет игра или мод. Файл ляжет рядом с остальными конфигами сервера.',
+          const name = h('input', { style: 'width:100%' });
+          if (!await ask('Имя файла',
             { ok: 'Создать', danger: false, extra: [name] })) return;
           let wanted = name.value.trim();
           if (!wanted) return;
@@ -1762,7 +1762,7 @@ const TAB_VIEWS = {
           field('Интервал бэкапов игры, с', inputs.periodic_backup_interval_seconds, '0 - как в игре. Пишется в Game.ini перед стартом; каждый бэкап копирует базу целиком.'))),
       gameBox,
       h('div', { class: 'panel' }, h('h2', { text: 'Оповещения' }),
-        h('p', { class: 'muted small' }, 'В игру - через RCON (нужен включённый RCON в «Настройках игры»), всегда, даже если никого нет. В Discord, Telegram и на свои адреса - в каналы, которые берут это сообщение (страница ', h('a', { href: '#/notifications', text: 'Уведомления' }), '). Эмодзи и коды вида :warning: остаются только там: в игру текст уходит без них - шрифт игры их не рисует.'),
+        h('p', { class: 'muted small', text: 'Для уведомлений в игру нужен включённый RCON. Эмодзи и коды вида :warning: вычищаются для игры.' }),
         h('div', { class: 'form' },
           field('Предупреждать за', marksBox, 'Интервалы отсчёта перед плановым и отложенным рестартом: сообщение «Рестарт по расписанию» уходит за каждый интервал, рестарт - ровно в назначенное время.\nКнопки «Рестарт» и «Остановить» действуют сразу, без отсчёта.\nПусто - без отсчёта.'),
           field('Отложенный рестарт через, мин', delayInput, 'Кнопка «Отложенный рестарт» и рестарт ради найденного обновления ставятся на столько минут вперёд. Если плановый рестарт наступит раньше, обновление ставится при нём, а кнопка откажет.'),
