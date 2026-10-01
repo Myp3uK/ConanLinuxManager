@@ -25,32 +25,47 @@ func TestWorkshopArgsForceWindowsPlatform(t *testing.T) {
 	}
 }
 
+// The fixture is an appworkshop_440900.acf SteamCMD actually wrote, with a
+// second item added by hand: the details block carries latest_timeupdated,
+// which is how SteamCMD records that a newer version exists.
 func TestParseWorkshopState(t *testing.T) {
 	acf := `"AppWorkshop"
 {
 	"appid"		"440900"
-	"SizeOnDisk"	"123456"
+	"SizeOnDisk"		"26668482"
+	"NeedsUpdate"		"0"
+	"NeedsDownload"		"0"
+	"TimeLastUpdated"		"0"
 	"WorkshopItemsInstalled"
 	{
-		"1159180273"
+		"880454836"
 		{
-			"size"		"48271360"
-			"timeupdated"	"1756000000"
-			"manifest"	"7382658243512"
+			"size"		"26668482"
+			"timeupdated"		"1712142752"
+			"manifest"		"4900369035769746925"
 		}
 		"2050780234"
 		{
 			"size"		"1024"
-			"timeupdated"	"1700000000"
+			"timeupdated"		"1700000000"
 		}
 	}
 	"WorkshopItemDetails"
 	{
-		"1159180273"
+		"880454836"
 		{
-			"manifest"	"7382658243512"
-			"timeupdated"	"1756000000"
-			"timetouched"	"1757000000"
+			"manifest"		"4900369035769746925"
+			"timeupdated"		"1712142752"
+			"timetouched"		"1790845200"
+			"latest_timeupdated"		"1712142752"
+			"latest_manifest"		"4900369035769746925"
+		}
+		"2050780234"
+		{
+			"manifest"		"111"
+			"timeupdated"		"1700000000"
+			"latest_timeupdated"		"1760000000"
+			"latest_manifest"		"222"
 		}
 	}
 }
@@ -62,15 +77,20 @@ func TestParseWorkshopState(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("got %d items: %+v", len(items), items)
 	}
-	pippi := items["1159180273"]
-	if !pippi.Updated.Equal(time.Unix(1756000000, 0).UTC()) {
+	pippi := items["880454836"]
+	if !pippi.Updated.Equal(time.Unix(1712142752, 0).UTC()) {
 		t.Errorf("Updated = %v", pippi.Updated)
 	}
-	if pippi.Size != 48271360 || pippi.Manifest != "7382658243512" {
+	// The manifest is the same value the Steam API returns as hcontent_file.
+	if pippi.Size != 26668482 || pippi.Manifest != "4900369035769746925" {
 		t.Errorf("unexpected item: %+v", pippi)
 	}
-	if items["2050780234"].Manifest != "" {
-		t.Errorf("manifest invented: %+v", items["2050780234"])
+	if !pippi.LatestUpdated.Equal(pippi.Updated) || pippi.LatestManifest != pippi.Manifest {
+		t.Errorf("an up-to-date item should match its latest: %+v", pippi)
+	}
+	stale := items["2050780234"]
+	if !stale.LatestUpdated.After(stale.Updated) || stale.LatestManifest == stale.Manifest {
+		t.Errorf("expected a newer version on record: %+v", stale)
 	}
 }
 

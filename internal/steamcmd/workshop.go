@@ -21,9 +21,17 @@ type WorkshopItem struct {
 	// installed copy is told apart from a newer one.
 	Updated time.Time
 	Size    int64
-	// Manifest identifies the exact content; it is kept for diagnosing a
-	// download that produced the wrong files.
+	// Manifest identifies the exact content. It is the same value the Steam
+	// API calls hcontent_file, so the two sources can be compared directly
+	// when a timestamp is in doubt.
 	Manifest string
+	// LatestUpdated and LatestManifest are what SteamCMD last heard was
+	// available, which it records alongside what it installed. They are only
+	// as fresh as the last time SteamCMD spoke to Steam about the item, so
+	// they serve as a cross-check and as a fallback when Steam's API cannot be
+	// reached, not as the periodic check.
+	LatestUpdated  time.Time
+	LatestManifest string
 }
 
 // workshopArgs is the command line for one item. The platform override is not
@@ -122,6 +130,12 @@ func parseWorkshopState(text string) (map[string]WorkshopItem, error) {
 			}
 			if manifest := stringValue(entry["manifest"]); manifest != "" {
 				item.Manifest = manifest
+			}
+			if seconds, err := strconv.ParseInt(stringValue(entry["latest_timeupdated"]), 10, 64); err == nil && seconds > 0 {
+				item.LatestUpdated = time.Unix(seconds, 0).UTC()
+			}
+			if manifest := stringValue(entry["latest_manifest"]); manifest != "" {
+				item.LatestManifest = manifest
 			}
 			items[id] = item
 		}
