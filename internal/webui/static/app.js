@@ -1200,7 +1200,7 @@ const TAB_VIEWS = {
       try { files = await api('GET', `/servers/${enc(ctx.id)}/configs`); }
       catch { files = files.length ? files : [{ name: 'ServerSettings', file: 'ServerSettings.ini' }, { name: 'Game', file: 'Game.ini' }, { name: 'Engine', file: 'Engine.ini' }]; }
       if (file !== 'logs' && !files.some(f => f.name === file)) file = 'ServerSettings';
-      const addFile = h('button', { class: 'ghost', text: '+ Свой файл', title: 'Добавить INI-файл, который читает мод',
+      const addFile = h('button', { class: 'ghost', text: '+ Свой файл', title: 'Добавить конфиг',
         disabled: running, onclick: e => act(e.target, async () => {
           const name = h('input', { placeholder: 'ModHttp.ini', style: 'width:100%' });
           if (!await ask('Имя файла - то, под которым его ищет игра или мод. Файл ляжет рядом с остальными конфигами сервера.',
@@ -1218,7 +1218,7 @@ const TAB_VIEWS = {
         }) });
       const switches = extra => h('div', { class: 'row', style: 'margin-bottom:12px' },
         files.map(f => h('button', { class: f.name === file ? 'primary' : '', text: f.file,
-          title: f.custom ? 'Добавлен вами или модом' : '', onclick: () => { file = f.name; draw(); } }))
+          onclick: () => { file = f.name; draw(); } }))
           .concat(h('button', { class: file === 'logs' ? 'primary' : '', text: 'Уровни логов', onclick: () => { file = 'logs'; draw(); } }), addFile),
         extra);
       if (file === 'logs') {
