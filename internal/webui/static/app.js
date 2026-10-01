@@ -1952,11 +1952,15 @@ async function viewNotifications() {
     // technical notices are ticked by whoever wants them.
     const selected = channel ? channelCategories(c, cats) : cats.filter(x => x.audience === 'players').map(x => x.key);
     const boxes = {};
-    // One list, not one per audience: the grid wraps it into columns so ten
-    // messages do not become a tall ladder.
-    const columns = cats.map(x => {
+    // One list, two columns: the switch and its name on the left, what the
+    // message is on the right. The explanation is the point of the row, so it
+    // is written out rather than hidden behind a question mark.
+    const columns = cats.flatMap(x => {
       boxes[x.key] = h('input', { type: 'checkbox', checked: selected.includes(x.key) });
-      return h('label', { class: 'row event-item' }, boxes[x.key], h('span', { text: x.title }), helpIcon(x.help));
+      return [
+        h('label', { class: 'row event-item' }, boxes[x.key], h('span', { text: x.title })),
+        h('p', { class: 'muted small event-help', text: x.help }),
+      ];
     });
     const kindSwitch = channel ? null : h('div', { class: 'row kind-switch' }, Object.entries(KIND_NAMES).map(([k, t]) =>
       h('button', { class: k === kind ? 'primary' : '', text: t, onclick: () => showForm(null, k) })));
@@ -1968,7 +1972,7 @@ async function viewNotifications() {
         field('Название', name, 'Для себя: чтобы отличать каналы в этом списке.'),
         field('Серверы', server, 'От каких серверов присылать сообщения.')),
       h('h3', { text: '2. Что присылать' }),
-      h('div', { class: 'category-groups' }, columns),
+      h('div', { class: 'category-list' }, columns),
       h('h3', { text: '3. Оформление' }),
       h('div', { class: 'form' }, extra,
         field('Язык сообщений', language, 'Для заголовков, которые менеджер пишет сам.'),
