@@ -52,6 +52,51 @@ func readConfig(cfg server.Config, file string) (string, string, bool, error) {
 	return path, string(data), true, nil
 }
 
+// ConfigFiles lists the INI files a server has: the game's own three and
+// whatever else is in its config directory, such as the files mods read.
+func (c *Controller) ConfigFiles(ctx context.Context, id string) ([]gameconfig.File, error) {
+	cfg, err := c.Repo.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return gameconfig.List(cfg)
+}
+
+// DeleteConfig removes a file an operator or a mod added. The game's own files
+// are never removed: it writes them itself, and a missing one is a server that
+// starts on defaults without saying so.
+func (c *Controller) DeleteConfig(ctx context.Context, id, file string) error {
+	if _, known := gameconfig.Files[file]; known {
+		return server.ErrInvalidConfig("the game's own files cannot be removed, only emptied")
+	}
+	if !gameconfig.ValidConfigName(file) {
+		return server.ErrInvalidConfig("invalid config file name")
+	}
+	cfg, err := c.acquireForConfig(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer c.release(id)
+	path, before, exists, err := readConfig(cfg, file)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("config file %q does not exist", file)
+	}
+	// The content is kept as a version first, so a file removed by mistake can
+	// be read back out of the history.
+	if _, err := c.Repo.SaveConfigVersion(ctx, server.ConfigVersion{ServerID: cfg.ID, File: file,
+		Reason: "before delete", Content: before}); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	c.emit(events.ConfigChanged, cfg, file+": file removed", map[string]string{"file": file})
+	return nil
+}
+
 // ReadConfig shows a game INI file. Reading is allowed while the server runs;
 // only writing needs it stopped.
 func (c *Controller) ReadConfig(ctx context.Context, id, file string) (ConfigView, error) {
@@ -129,11 +174,13 @@ func (c *Controller) ReplaceConfig(ctx context.Context, id, file, content string
 		return err
 	}
 	defer c.release(id)
-	path, before, _, err := readConfig(cfg, file)
+	path, before, exists, err := readConfig(cfg, file)
 	if err != nil {
 		return err
 	}
-	if before == content {
+	// A file that is not there yet is always a change, even when the content
+	// is empty: that is how an operator adds a config a mod will fill in.
+	if exists && before == content {
 		return nil
 	}
 	if err := c.replaceConfig(ctx, cfg, file, path, before, content, "before replace"); err != nil {

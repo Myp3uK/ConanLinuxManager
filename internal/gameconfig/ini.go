@@ -2,6 +2,7 @@ package gameconfig
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -10,20 +11,101 @@ import (
 	"github.com/example/conan-manager/internal/server"
 )
 
-// Files are the game INI files an operator may edit.
+// Files are the game's own INI files, which the manager knows by a short name.
+// They are not the only ones it will edit: mods bring their own, and an
+// operator may add any .ini the game or a mod reads.
 var Files = map[string]string{
 	"ServerSettings": "ServerSettings.ini",
 	"Game":           "Game.ini",
 	"Engine":         "Engine.ini",
 }
 
+// configName accepts a file an operator adds: a plain name ending in .ini, with
+// no directory part and no leading dot, so a name can only ever mean a file
+// inside the server's own config directory.
+var configName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}\.ini$`)
+
+// ValidConfigName reports whether a name may be used for a config file.
+func ValidConfigName(name string) bool {
+	return configName.MatchString(name) && !strings.Contains(name, "..")
+}
+
+// FileName turns what the API was given into the file on disk it means: a
+// short name for one of the game's own files, or the file name itself for one
+// an operator added.
+func FileName(file string) (string, error) {
+	if name, ok := Files[file]; ok {
+		return name, nil
+	}
+	if ValidConfigName(file) {
+		return file, nil
+	}
+	return "", fmt.Errorf("invalid config file %q: use ServerSettings, Game, Engine or a file name ending in .ini", file)
+}
+
+// Dir is the directory the running server reads its INI files from.
+func Dir(cfg server.Config) string { return filepath.Dir(Path(cfg)) }
+
 // FilePath is where the running server reads the named file.
 func FilePath(cfg server.Config, file string) (string, error) {
-	name, ok := Files[file]
-	if !ok {
-		return "", fmt.Errorf("unknown config file %q (use ServerSettings, Game or Engine)", file)
+	name, err := FileName(file)
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(filepath.Dir(Path(cfg)), name), nil
+	return filepath.Join(Dir(cfg), name), nil
+}
+
+// File is one INI file of a server as the panel lists it.
+type File struct {
+	// Name is what the API takes: a short name for the game's own files, the
+	// file name for the rest.
+	Name string `json:"name"`
+	// File is the name on disk.
+	File   string `json:"file"`
+	Exists bool   `json:"exists"`
+	Size   int64  `json:"size"`
+	// Custom marks a file an operator or a mod added rather than one the game
+	// writes itself. Only these may be removed.
+	Custom bool `json:"custom"`
+}
+
+// List returns the INI files a server has: the game's own ones first, in a
+// fixed order so the panel does not reshuffle its buttons, then whatever else
+// the directory holds.
+func List(cfg server.Config) ([]File, error) {
+	known := []string{"ServerSettings", "Game", "Engine"}
+	onDisk := map[string]int64{}
+	entries, err := os.ReadDir(Dir(cfg))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !ValidConfigName(entry.Name()) {
+			// Skips the manager's own ".conan-manager.tmp" among others.
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		onDisk[entry.Name()] = info.Size()
+	}
+	result := make([]File, 0, len(known)+len(onDisk))
+	for _, name := range known {
+		file := Files[name]
+		size, exists := onDisk[file]
+		delete(onDisk, file)
+		result = append(result, File{Name: name, File: file, Exists: exists, Size: size})
+	}
+	rest := make([]string, 0, len(onDisk))
+	for file := range onDisk {
+		rest = append(rest, file)
+	}
+	sort.Strings(rest)
+	for _, file := range rest {
+		result = append(result, File{Name: file, File: file, Exists: true, Size: onDisk[file], Custom: true})
+	}
+	return result, nil
 }
 
 // Entry is one key=value line.

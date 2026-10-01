@@ -94,3 +94,70 @@ func TestOnlyKnownConfigFilesAreReachable(t *testing.T) {
 		}
 	}
 }
+
+func TestReplaceConfigCreatesAnEmptyCustomFile(t *testing.T) {
+	c, create := testController(t)
+	ctx := context.Background()
+	cfg := create("a", filepath.Join(t.TempDir(), "game"), "")
+	// Adding a config a mod will fill in starts with an empty file, which an
+	// unchanged-content check would otherwise swallow.
+	if err := c.ReplaceConfig(ctx, cfg.ID, "ModHttp.ini", ""); err != nil {
+		t.Fatal(err)
+	}
+	files, err := c.ConfigFiles(ctx, cfg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *gameconfig.File
+	for i := range files {
+		if files[i].Name == "ModHttp.ini" {
+			found = &files[i]
+		}
+	}
+	if found == nil || !found.Exists || !found.Custom {
+		t.Fatalf("the file was not created: %+v", files)
+	}
+	view, err := c.ReadConfig(ctx, cfg.ID, "ModHttp.ini")
+	if err != nil || view.Content != "" || !view.Exists {
+		t.Fatalf("read back: %+v, %v", view, err)
+	}
+}
+
+func TestDeleteConfigRemovesOnlyCustomFiles(t *testing.T) {
+	c, create := testController(t)
+	ctx := context.Background()
+	cfg := create("a", filepath.Join(t.TempDir(), "game"), "")
+	if err := c.ReplaceConfig(ctx, cfg.ID, "ModHttp.ini", "[Http]\n"); err != nil {
+		t.Fatal(err)
+	}
+	// The game writes its own files; a missing one is a server quietly on
+	// defaults, so those cannot be removed.
+	if err := c.DeleteConfig(ctx, cfg.ID, "Game"); err == nil {
+		t.Error("the game's own file should not be removable")
+	}
+	if err := c.DeleteConfig(ctx, cfg.ID, "../escape.ini"); err == nil {
+		t.Error("a path should be refused")
+	}
+	if err := c.DeleteConfig(ctx, cfg.ID, "ModHttp.ini"); err != nil {
+		t.Fatal(err)
+	}
+	// Removing it twice is an error, not a silent success.
+	if err := c.DeleteConfig(ctx, cfg.ID, "ModHttp.ini"); err == nil {
+		t.Error("deleting a file that is gone should say so")
+	}
+	files, err := c.ConfigFiles(ctx, cfg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f.Name == "ModHttp.ini" {
+			t.Fatalf("the file is still there: %+v", f)
+		}
+	}
+	// Its content stays in the history, so a file removed by mistake is not
+	// lost with it.
+	versions, err := c.Repo.ConfigVersions(ctx, cfg.ID, "ModHttp.ini")
+	if err != nil || len(versions) == 0 {
+		t.Fatalf("no version kept: %v, %+v", err, versions)
+	}
+}

@@ -394,6 +394,27 @@ func (a *api) backups(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// configFiles serves /api/v1/servers/{id}/configs: which INI files the server
+// has, so the panel does not have to know their names in advance.
+func (a *api) configFiles(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/servers/"), "/configs")
+	if id == "" || strings.Contains(id, "/") {
+		a.fail(w, r, http.StatusNotFound, nil)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		a.fail(w, r, http.StatusMethodNotAllowed, nil)
+		return
+	}
+	files, err := a.control.ConfigFiles(r.Context(), id)
+	if err != nil {
+		a.fail(w, r, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, files)
+}
+
 // gameConfig serves /api/v1/servers/{id}/config/{file}[/versions[/{v}[/restore]]].
 func (a *api) gameConfig(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/servers/"), "/"), "/")
@@ -442,6 +463,12 @@ func (a *api) gameConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := a.control.ReplaceConfig(r.Context(), id, file, body.Content); err != nil {
+			fail(err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case len(rest) == 0 && r.Method == http.MethodDelete:
+		if err := a.control.DeleteConfig(r.Context(), id, file); err != nil {
 			fail(err)
 			return
 		}
@@ -518,6 +545,8 @@ func (a *api) routeServer(w http.ResponseWriter, r *http.Request) {
 		a.scheduleRuns(w, r)
 	case strings.HasSuffix(r.URL.Path, "/schedule"):
 		a.schedule(w, r)
+	case strings.HasSuffix(r.URL.Path, "/configs"):
+		a.configFiles(w, r)
 	case strings.Contains(r.URL.Path, "/mods"):
 		a.mods(w, r)
 	default:

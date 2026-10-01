@@ -1191,12 +1191,35 @@ const TAB_VIEWS = {
 
   async config(body, ctx) {
     let file = 'ServerSettings';
+    // files comes from the server: besides the game's own three, a server has
+    // whatever INI files its mods and its operator put there.
+    let files = [];
     const box = h('div');
     const draw = async () => {
       const running = ['running', 'starting', 'stopping'].includes(ctx.detail.lifecycle.state);
+      try { files = await api('GET', `/servers/${enc(ctx.id)}/configs`); }
+      catch { files = files.length ? files : [{ name: 'ServerSettings', file: 'ServerSettings.ini' }, { name: 'Game', file: 'Game.ini' }, { name: 'Engine', file: 'Engine.ini' }]; }
+      if (file !== 'logs' && !files.some(f => f.name === file)) file = 'ServerSettings';
+      const addFile = h('button', { class: 'ghost', text: '+ Свой файл', title: 'Добавить INI-файл, который читает мод',
+        disabled: running, onclick: e => act(e.target, async () => {
+          const name = h('input', { placeholder: 'ModHttp.ini', style: 'width:100%' });
+          if (!await ask('Имя файла - то, под которым его ищет игра или мод. Файл ляжет рядом с остальными конфигами сервера.',
+            { ok: 'Создать', danger: false, extra: [name] })) return;
+          let wanted = name.value.trim();
+          if (!wanted) return;
+          if (!/\.ini$/i.test(wanted)) wanted += '.ini';
+          if (files.some(f => f.file === wanted)) { toast('Такой файл уже есть', 'bad'); file = wanted; draw(); return; }
+          // An empty file is created at once, so its name is checked by the
+          // server before anything is typed into it.
+          await api('PUT', `/servers/${enc(ctx.id)}/config/${enc(wanted)}`, { content: '' });
+          file = wanted;
+          toast('Файл создан');
+          draw();
+        }) });
       const switches = extra => h('div', { class: 'row', style: 'margin-bottom:12px' },
-        [['ServerSettings', 'ServerSettings.ini'], ['Game', 'Game.ini'], ['Engine', 'Engine.ini'], ['logs', 'Уровни логов']]
-          .map(([f, label]) => h('button', { class: f === file ? 'primary' : '', text: label, onclick: () => { file = f; draw(); } })),
+        files.map(f => h('button', { class: f.name === file ? 'primary' : '', text: f.file,
+          title: f.custom ? 'Добавлен вами или модом' : '', onclick: () => { file = f.name; draw(); } }))
+          .concat(h('button', { class: file === 'logs' ? 'primary' : '', text: 'Уровни логов', onclick: () => { file = 'logs'; draw(); } }), addFile),
         extra);
       if (file === 'logs') {
         let engine, categories;
@@ -1207,7 +1230,7 @@ const TAB_VIEWS = {
         return;
       }
       let view;
-      try { view = await api('GET', `/servers/${enc(ctx.id)}/config/${file}`); }
+      try { view = await api('GET', `/servers/${enc(ctx.id)}/config/${enc(file)}`); }
       catch (e) { replace(box, h('div', { class: 'notice bad', text: e.message })); return; }
       const text = h('textarea', { value: view.content, disabled: running, spellcheck: 'false', autocapitalize: 'off', autocomplete: 'off' });
       const editor = iniEditor(text);
@@ -1218,21 +1241,31 @@ const TAB_VIEWS = {
         !view.exists ? h('div', { class: 'notice', text: 'Файла ещё нет: игра создаст его при первом запуске. Можно написать его заранее.' }) : null,
         view.managed && view.managed.length ? h('div', { class: 'notice', text: 'Менеджер переписывает перед стартом: ' + view.managed.join(', ') + '.' }) : null,
         editor, h('div', { class: 'row end', style: 'margin-top:10px' },
+          // Only a file somebody added can be removed: the game writes its own
+          // three itself, and a missing one is a server quietly on defaults.
+          (files.find(f => f.name === file) || {}).custom
+            ? h('button', { class: 'danger', text: 'Удалить файл', disabled: running, onclick: e => act(e.target, async () => {
+              if (!await ask(`Удалить ${file}? Содержимое останется в истории версий, оттуда его можно прочитать.`, { ok: 'Удалить' })) return;
+              await api('DELETE', `/servers/${enc(ctx.id)}/config/${enc(file)}`);
+              file = 'ServerSettings';
+              toast('Файл удалён'); draw();
+            }) })
+            : null,
           h('span', { class: 'spacer' }),
           h('button', { class: 'primary', text: 'Сохранить файл', disabled: running, onclick: e => act(e.target, async () => {
-            await api('PUT', `/servers/${enc(ctx.id)}/config/${file}`, { content: text.value });
+            await api('PUT', `/servers/${enc(ctx.id)}/config/${enc(file)}`, { content: text.value });
             toast('Сохранено'); draw();
           }) })));
       fillHeight(editor, 70, 280);
     };
     const versionsPanel = async running => {
       let versions = [];
-      try { versions = await api('GET', `/servers/${enc(ctx.id)}/config/${file}/versions`); } catch { versions = []; }
+      try { versions = await api('GET', `/servers/${enc(ctx.id)}/config/${enc(file)}/versions`); } catch { versions = []; }
       return h('details', { class: 'panel versions' }, h('summary', { text: `История версий (${versions.length})` }),
         table(['Сохранена', 'Причина', 'Размер', ''], versions.map(v => [fmtTime(v.created_at), v.reason, fmtBytes(v.size),
           h('button', { text: 'Вернуть', disabled: running, onclick: e => act(e.target, async () => {
             if (!await ask(`Вернуть ${file}.ini к версии от ${fmtTime(v.created_at)}? Текущее содержимое тоже сохранится как версия.`, { ok: 'Вернуть', danger: false })) return;
-            await api('POST', `/servers/${enc(ctx.id)}/config/${file}/versions/${v.id}/restore`);
+            await api('POST', `/servers/${enc(ctx.id)}/config/${enc(file)}/versions/${v.id}/restore`);
             toast('Версия возвращена'); draw();
           }) })]), 'Правок через менеджер ещё не было'));
     };
@@ -2125,7 +2158,8 @@ const AUDIT_ACTIONS = {
   'POST /servers/{}/delayed-restart': 'Отложенный рестарт', 'DELETE /servers/{}/delayed-restart': 'Отмена рестарта',
   'POST /servers/{}/backup': 'Бэкап', 'POST /servers/{}/backups/{}/restore': 'Восстановление из бэкапа',
   'DELETE /servers/{}/backups/{}': 'Удаление бэкапа',
-  'PUT /servers/{}/config/{}': 'Изменение конфига', 'POST /servers/{}/config/{}/versions/{}/restore': 'Откат конфига',
+  'PUT /servers/{}/config/{}': 'Изменение конфига',
+  'DELETE /servers/{}/config/{}': 'Удаление конфига', 'POST /servers/{}/config/{}/versions/{}/restore': 'Откат конфига',
   'PUT /servers/{}/schedule': 'Расписание', 'DELETE /servers/{}/schedule': 'Удаление расписания',
   'PUT /servers/{}/mods': 'Список модов', 'POST /servers/{}/mods/install': 'Установка модов',
   'POST /servers/{}/mods/check': 'Проверка модов', 'POST /servers/{}/mods/collection': 'Добавление коллекции модов',
