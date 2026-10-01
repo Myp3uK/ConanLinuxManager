@@ -121,6 +121,23 @@ CREATE TABLE IF NOT EXISTS config_versions (
 );
 CREATE INDEX IF NOT EXISTS idx_config_versions ON config_versions(server_id, file, id DESC);
 
+CREATE TABLE IF NOT EXISTS server_mods (
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    workshop_id TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    title TEXT NOT NULL DEFAULT '',
+    paks TEXT NOT NULL DEFAULT '[]',
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    installed_updated TEXT,
+    latest_updated TEXT,
+    installed_at TEXT,
+    checked_at TEXT,
+    last_error TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (server_id, workshop_id)
+);
+
 CREATE TABLE IF NOT EXISTS hook_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
