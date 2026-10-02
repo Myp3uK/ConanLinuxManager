@@ -251,15 +251,19 @@ function fmtBytes(n) {
 }
 
 const STATES = {
-  idle: ['Остановлен', ''], starting: ['Запускается', 'warn'], loading: ['Запускается', 'warn'], running: ['Работает', 'ok'],
+  idle: ['Остановлен', ''], uninstalled: ['Не установлен', 'warn'],
+  starting: ['Запускается', 'warn'], loading: ['Запускается', 'warn'], running: ['Работает', 'ok'],
   stopping: ['Останавливается', 'warn'], flushing: ['Сохраняет', 'warn'], installing: ['Устанавливается', 'warn'],
   configuring: ['Настраивается', 'warn'], verifying: ['Проверка базы', 'warn'], restoring: ['Восстановление', 'warn'],
   deleting: ['Удаляется', 'warn'], recovery_required: ['Нужно восстановление', 'bad'],
 };
 // shownState is the state as players see it: a running server is still
-// starting until the game reports it has loaded.
+// starting until the game reports it has loaded, and a server whose game was
+// never installed is not merely stopped - it cannot be started at all, so
+// saying «Остановлен» would send the operator looking for the wrong fault.
 function shownState(d) {
   const state = d.lifecycle.state;
+  if (state === 'idle' && !d.build) return 'uninstalled';
   return state === 'running' && d.health && d.health.ready === false ? 'loading' : state;
 }
 function stateBadge(state) {
