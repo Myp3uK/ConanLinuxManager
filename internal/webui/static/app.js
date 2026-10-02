@@ -630,7 +630,8 @@ async function viewServers() {
           ['Доступность', availabilityBadge(d.health && d.health.availability)],
           ['Игроки', playersText(s.id, state)],
           ['Порты', `${s.game_port} (raw ${s.game_port + 1}) / ${s.query_port}`],
-          d.mod_count > 0 && ['Моды', String(d.mod_count)],
+          // Always a row, so the buttons of every card line up.
+          ['Моды', d.mod_count > 0 ? String(d.mod_count) : h('span', { class: 'muted', text: 'нет' })],
           state === 'running' && d.process && ['Работает', fmtAgo(d.process.started_at).replace(' назад', '')],
           d.health && d.health.recent_crashes > 0 && ['Падений', String(d.health.recent_crashes)],
           d.health && d.health.restart_pending && ['Перезапуск', fmtAgo(d.health.restart_at)],
