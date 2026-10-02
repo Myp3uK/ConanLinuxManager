@@ -388,7 +388,7 @@ func (c *Controller) watchMods(ctx context.Context, cfg server.Config, running b
 				c.Logger.Info("automatic mod update not started", "server", cfg.ID, "error", err)
 			}
 		}
-	case c.noteUpdate(modsNoteKey(cfg.ID), modsNote(pending)):
+	case c.noteUpdate(ctx, cfg.ID, server.NoticeMods, modsNote(pending)):
 		c.announceUpdate(ctx, cfg, modUpdateVars(pending), running)
 	}
 }
@@ -397,15 +397,11 @@ func (c *Controller) watchMods(ctx context.Context, cfg server.Config, running b
 // sets the restart they go in at. The set is handled once, so a delayed restart
 // the operator cancelled is not set again and the mods go in at the next one.
 func (c *Controller) modsSoon(ctx context.Context, cfg server.Config, pending []server.Mod) {
-	if !c.noteUpdate(modsNoteKey(cfg.ID), modsNote(pending)) {
+	if !c.noteUpdate(ctx, cfg.ID, server.NoticeMods, modsNote(pending)) {
 		return
 	}
 	c.announceSoon(ctx, cfg, modUpdateVars(pending), modIDList(pending))
 }
-
-// modsNoteKey keeps the mod announcement from overwriting the build one:
-// noteUpdate holds a single value per key, and a server has both to announce.
-func modsNoteKey(id string) string { return id + "\x00mods" }
 
 // modsNote identifies the versions waiting, so a further change on Steam is
 // announced again while the same one is not.

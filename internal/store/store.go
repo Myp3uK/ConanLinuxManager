@@ -233,6 +233,13 @@ CREATE TABLE IF NOT EXISTS server_ready (
     server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
     started_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS server_notices (
+    server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (server_id, kind)
+);
 CREATE TABLE IF NOT EXISTS admins (
     username TEXT PRIMARY KEY,
     password_hash TEXT NOT NULL,

@@ -45,6 +45,27 @@ func (r *Repository) WasReady(ctx context.Context, id string, started time.Time)
 	return (at.Sub(started) < 3*time.Second) && (started.Sub(at) < 3*time.Second)
 }
 
+// Kinds of announcement a server has at most one of outstanding.
+const (
+	NoticeBuild = "build"
+	NoticeMods  = "mods"
+)
+
+// NoteOnce records what was last announced to players for a server and kind,
+// and reports whether this value is new. It is stored rather than remembered,
+// so a restart of the manager does not announce the same waiting build or the
+// same waiting mods a second time.
+func (r *Repository) NoteOnce(ctx context.Context, id, kind, value string) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `INSERT INTO server_notices(server_id,kind,value,at) VALUES(?,?,?,?)
+		ON CONFLICT(server_id,kind) DO UPDATE SET value=excluded.value,at=excluded.at WHERE value<>excluded.value`,
+		id, kind, value, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
+}
+
 func (r *Repository) SetPendingRestart(ctx context.Context, p PendingRestart) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO pending_restarts(server_id,reason,detail,due_at,created_at) VALUES(?,?,?,?,?)
 		ON CONFLICT(server_id) DO UPDATE SET reason=excluded.reason,detail=excluded.detail,due_at=excluded.due_at,created_at=excluded.created_at`,

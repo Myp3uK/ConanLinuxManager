@@ -232,7 +232,7 @@ func (c *Controller) buildBeforeStart(ctx context.Context, cfg server.Config) {
 		return
 	}
 	// Found by the periodic check, the build was announced already.
-	if c.noteUpdate(id, status.Latest) {
+	if c.noteUpdate(ctx, id, server.NoticeBuild, status.Latest) {
 		_ = c.message(ctx, cfg, server.MsgUpdate, updateVars(status.Latest), false)
 	}
 	c.emit(events.UpdateStarted, cfg, "Updating server files before the start", map[string]string{"from": status.Installed, "to": status.Latest})
@@ -337,7 +337,7 @@ func (c *Controller) WatchUpdates(ctx context.Context, interval time.Duration) {
 							c.Logger.Info("automatic update not started", "server", cfg.ID, "error", err)
 						}
 					}
-				case c.noteUpdate(cfg.ID, status.Latest):
+				case worthAnnouncing(status) && c.noteUpdate(ctx, cfg.ID, server.NoticeBuild, status.Latest):
 					c.announceUpdate(ctx, cfg, updateVars(status.Latest), running)
 				}
 			}
@@ -359,13 +359,21 @@ func (c *Controller) WatchUpdates(ctx context.Context, interval time.Duration) {
 	}
 }
 
+// worthAnnouncing reports whether an available build is worth telling the
+// operator about. A server whose game was never installed is not behind a
+// build, it has none: CheckUpdate calls that available so the panel can offer
+// the install, but announcing it as an update points at the wrong button, and
+// the card already says the server is not installed. Auto-update is not gated
+// by this - a server set to update itself is left to install itself as before.
+func worthAnnouncing(status UpdateStatus) bool { return status.Installed != "" }
+
 // updateSoon announces a new build on a running server with auto_update and
 // sets the restart that installs it: a delayed restart, or the scheduled one
 // when that comes before the delay is out. Each build is handled once, so a
 // delayed restart the operator cancelled is not set again; the build then
 // goes in at the next restart.
 func (c *Controller) updateSoon(ctx context.Context, cfg server.Config, build string) {
-	if !c.noteUpdate(cfg.ID, build) {
+	if !c.noteUpdate(ctx, cfg.ID, server.NoticeBuild, build) {
 		return
 	}
 	c.announceSoon(ctx, cfg, updateVars(build), build)
@@ -398,18 +406,28 @@ func (c *Controller) announceUpdate(ctx context.Context, cfg server.Config, vars
 	}
 }
 
-// noteUpdate records that a build was announced for a server. False means it
-// had been already.
-func (c *Controller) noteUpdate(id, build string) bool {
+// noteUpdate records what was last announced for a server and kind, and
+// reports whether it is new. The answer is kept in the database: in memory
+// alone, every restart of the manager announced the same waiting build again,
+// which is how a stopped server came to report the same update hourly.
+func (c *Controller) noteUpdate(ctx context.Context, id, kind, value string) bool {
+	fresh, err := c.Repo.NoteOnce(ctx, id, kind, value)
+	if err == nil {
+		return fresh
+	}
+	// Without the database the manager still must not repeat itself within
+	// its own run, so the old in-memory note stands in.
+	c.Logger.Warn("announcement not recorded", "server", id, "kind", kind, "error", err)
 	c.pendingMu.Lock()
 	defer c.pendingMu.Unlock()
 	if c.updateNotes == nil {
 		c.updateNotes = map[string]string{}
 	}
-	if c.updateNotes[id] == build {
+	key := id + "\x00" + kind
+	if c.updateNotes[key] == value {
 		return false
 	}
-	c.updateNotes[id] = build
+	c.updateNotes[key] = value
 	return true
 }
 

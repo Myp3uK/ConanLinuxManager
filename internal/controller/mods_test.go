@@ -456,25 +456,44 @@ func TestWatchModsOnlyAnnouncesWithoutAutoUpdate(t *testing.T) {
 
 func TestModsNoteDoesNotClobberTheBuildNote(t *testing.T) {
 	c, cfg, _, _ := modsController(t)
+	ctx := context.Background()
 	pending := []server.Mod{{WorkshopID: "111111", LatestUpdated: time.Unix(1700000000, 0).UTC()}}
-	// Both are announced once, and neither silences the other: noteUpdate keeps
-	// one value per key, so the two must not share a key.
-	if !c.noteUpdate(cfg.ID, "200") {
+	// Both are announced once, and neither silences the other: a note holds
+	// one value per kind, so the two must not share a kind.
+	if !c.noteUpdate(ctx, cfg.ID, server.NoticeBuild, "200") {
 		t.Fatal("the build should be new")
 	}
-	if !c.noteUpdate(modsNoteKey(cfg.ID), modsNote(pending)) {
+	if !c.noteUpdate(ctx, cfg.ID, server.NoticeMods, modsNote(pending)) {
 		t.Fatal("the mods should be new")
 	}
-	if c.noteUpdate(cfg.ID, "200") {
+	if c.noteUpdate(ctx, cfg.ID, server.NoticeBuild, "200") {
 		t.Error("the build was announced twice")
 	}
-	if c.noteUpdate(modsNoteKey(cfg.ID), modsNote(pending)) {
+	if c.noteUpdate(ctx, cfg.ID, server.NoticeMods, modsNote(pending)) {
 		t.Error("the mods were announced twice")
 	}
 	// A further change on Steam is a new announcement.
 	pending[0].LatestUpdated = time.Unix(1760000000, 0).UTC()
-	if !c.noteUpdate(modsNoteKey(cfg.ID), modsNote(pending)) {
+	if !c.noteUpdate(ctx, cfg.ID, server.NoticeMods, modsNote(pending)) {
 		t.Error("a newer mod version should be announced")
+	}
+}
+
+// TestNoteSurvivesTheManagerRestart is the point of storing the note: the
+// operator saw the same waiting build announced after every deploy.
+func TestNoteSurvivesTheManagerRestart(t *testing.T) {
+	c, cfg, _, _ := modsController(t)
+	ctx := context.Background()
+	if !c.noteUpdate(ctx, cfg.ID, server.NoticeBuild, "25639945") {
+		t.Fatal("the build should be new")
+	}
+	// A manager that started again has an empty memory but the same database.
+	restarted := &Controller{Repo: c.Repo, Logger: c.Logger}
+	if restarted.noteUpdate(ctx, cfg.ID, server.NoticeBuild, "25639945") {
+		t.Error("the same build was announced again after a restart")
+	}
+	if !restarted.noteUpdate(ctx, cfg.ID, server.NoticeBuild, "25700000") {
+		t.Error("a genuinely newer build should still be announced")
 	}
 }
 
