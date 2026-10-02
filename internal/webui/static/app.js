@@ -557,8 +557,10 @@ function statsPanel(d) {
   }
   if (host.mem_total_bytes) {
     const used = host.mem_total_bytes - host.mem_available_bytes;
-    tiles.push(tile('Хост', `${fmtBytes(used)} / ${fmtBytes(host.mem_total_bytes)}`, `нагрузка ${host.load1.toFixed(2)} на ${host.cpus} ядер`, null,
-      'Память всей машины: занято / всего. Нагрузка - load average за минуту; больше числа ядер - процессору не хватает времени.'));
+    const cores = host.cpus || 1;
+    tiles.push(tile('Хост', `${fmtBytes(used)} / ${fmtBytes(host.mem_total_bytes)}`,
+      `${host.cpu_known ? 'ЦП ' + Math.round(host.cpu_percent) + '%' : 'ЦП …'} · load average ${host.load1.toFixed(2)} на ${cores} ${plural(cores, 'ядро', 'ядра', 'ядер')}`, null,
+      'Вся машина, а не этот сервер. Load average больше числа ядер - процессору не хватает времени.'));
   }
   return h('div', { class: 'panel' },
     h('h2', { text: 'Ресурсы' }),
