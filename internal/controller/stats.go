@@ -53,7 +53,9 @@ func (c *Controller) HostStats() serverstats.Host {
 	c.hostMu.Lock()
 	defer c.hostMu.Unlock()
 	if err == nil {
-		if now.At.Sub(c.hostCPU.At) >= hostCPUWindow || c.hostCPU.At.IsZero() {
+		// The zero time is checked for its own sake: subtracting it saturates
+		// rather than overflowing, which is right by luck, not by design.
+		if c.hostCPU.At.IsZero() || now.At.Sub(c.hostCPU.At) >= hostCPUWindow {
 			if busy, ok := now.BusySince(c.hostCPU); ok {
 				c.hostBusy, c.hostKnown = busy, true
 			}
