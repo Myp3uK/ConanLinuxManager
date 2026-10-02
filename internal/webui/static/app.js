@@ -250,6 +250,38 @@ function fmtBytes(n) {
   return (i ? n.toFixed(1) : n) + ' ' + units[i];
 }
 
+function plural(n, one, few, many) {
+  const mod100 = n % 100, mod10 = n % 10;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
+// gauge is a figure with a bar under it: the bar turns red where the resource
+// is nearly gone, which is the only thing worth noticing at a glance.
+function gauge(label, value, percent, sub) {
+  const share = Math.max(0, Math.min(100, percent || 0));
+  return h('div', { class: 'gauge' },
+    h('div', { class: 'gauge-head' }, h('span', { class: 'gauge-label' }, label), h('span', { class: 'gauge-value', text: value })),
+    h('div', { class: share >= 90 ? 'meter hot' : 'meter' }, h('span', { style: `width:${share.toFixed(1)}%` })),
+    h('div', { class: 'muted small', text: sub }));
+}
+
+// hostPanel is the load of the machine itself, which every server on it
+// shares; /proc is Linux-only, so a manager running elsewhere has nothing.
+function hostPanel(host) {
+  if (!host || !host.mem_total_bytes) return h('p', { class: 'muted', text: 'Нет данных о машине.' });
+  const used = host.mem_total_bytes - host.mem_available_bytes;
+  const cores = host.cpus || 1;
+  return h('div', { class: 'host-row' },
+    gauge(h('span', { class: 'row', style: 'gap:6px' }, 'ЦП', helpIcon('Среднее по всем ядрам между опросами панели.')),
+      host.cpu_known ? Math.round(host.cpu_percent) + '%' : '…', host.cpu_known ? host.cpu_percent : 0,
+      `load average ${host.load1.toFixed(2)} на ${cores} ${plural(cores, 'ядро', 'ядра', 'ядер')}`),
+    gauge('Память', `${fmtBytes(used)} / ${fmtBytes(host.mem_total_bytes)}`, used / host.mem_total_bytes * 100,
+      `свободно ${fmtBytes(host.mem_available_bytes)}`));
+}
+
 const STATES = {
   idle: ['Остановлен', ''], uninstalled: ['Не установлен', 'warn'],
   starting: ['Запускается', 'warn'], loading: ['Запускается', 'warn'], running: ['Работает', 'ok'],
@@ -568,11 +600,14 @@ function playersText(id, state) {
 
 async function viewServers() {
   const grid = h('div', { class: 'grid' });
+  const hostBox = h('div');
   const eventsBox = h('div');
   replace(app,
     h('div', { class: 'head' }, h('h1', { text: 'Серверы' }),
       h('button', { class: 'primary', text: '+ Добавить сервер', onclick: () => { location.hash = '#/new'; } })),
     grid,
+    h('h3', { text: 'Машина' }),
+    h('div', { class: 'panel' }, hostBox),
     h('h3', { text: 'Последние события' }),
     h('div', { class: 'panel' }, eventsBox));
 
@@ -593,6 +628,7 @@ async function viewServers() {
           ['Доступность', availabilityBadge(d.health && d.health.availability)],
           ['Игроки', playersText(s.id, state)],
           ['Порты', `${s.game_port} (raw ${s.game_port + 1}) / ${s.query_port}`],
+          d.mod_count > 0 && ['Моды', String(d.mod_count)],
           state === 'running' && d.process && ['Работает', fmtAgo(d.process.started_at).replace(' назад', '')],
           d.health && d.health.recent_crashes > 0 && ['Падений', String(d.health.recent_crashes)],
           d.health && d.health.restart_pending && ['Перезапуск', fmtAgo(d.health.restart_at)],
@@ -610,10 +646,15 @@ async function viewServers() {
   const refreshEvents = async () => {
     try { replace(eventsBox, eventsTable(await api('GET', '/events?limit=15'), true)); } catch (e) { replace(eventsBox, h('p', { class: 'muted', text: e.message })); }
   };
+  const refreshHost = async () => {
+    try { replace(hostBox, hostPanel(await api('GET', '/host'))); } catch (e) { replace(hostBox, h('p', { class: 'muted', text: e.message })); }
+  };
   await refresh();
   refreshEvents();
+  refreshHost();
   refreshPlayers(details).then(draw);
   every(5000, refresh);
+  every(5000, refreshHost);
   every(15000, refreshEvents);
   every(30000, () => refreshPlayers(details).then(draw));
 }
@@ -967,6 +1008,8 @@ async function viewServer(id, tab) {
       replace(headBox, h('a', { href: '#/', text: '← Серверы' }), h('h1', { text: d.server.name }),
         h('span', { class: 'muted mono small', text: d.server.id }), stateBadge(shownState(d)),
         h('span', { class: 'spacer' }), actionButtons(d, ctx.refresh));
+      replace(tabs.querySelector('a[data-tab=mods]'), 'Моды',
+        d.mod_count ? h('span', { class: 'tab-count', text: String(d.mod_count) }) : null);
       if (ctx.onRefresh) ctx.onRefresh(d);
       return true;
     };
@@ -1036,12 +1079,16 @@ const TAB_VIEWS = {
     const info = h('div', { class: 'panel' });
     const recovery = h('div');
     const installBox = h('div');
+    const note = h('div');
     const resources = h('div');
     const update = h('div', { class: 'panel' });
-    replace(body, installBox, recovery, resources, info, update);
+    replace(body, installBox, recovery, note, resources, info, update);
     const draw = d => {
       const s = d.server, p = d.process || {}, hl = d.health || {}, a = hl.availability || {};
       replace(installBox, installNotice(d, ctx));
+      // The operator's own comment, as written: its line breaks are kept.
+      replace(note, s.note ? h('div', { class: 'panel' },
+        h('h2', { text: 'Комментарий' }), h('p', { class: 'note-text', text: s.note })) : null);
       replace(recovery, s.recovery_reason ? h('div', { class: 'notice bad' },
         h('strong', { text: 'Запуск заблокирован. ' }), s.recovery_reason,
         h('div', { class: 'row', style: 'margin-top:8px' },
@@ -1644,6 +1691,7 @@ const TAB_VIEWS = {
     };
     const inputs = {
       name: h('input', { value: s.name }),
+      note: h('textarea', { rows: 3, value: s.note || '', spellcheck: 'false' }),
       restart_on_crash: h('input', { type: 'checkbox', checked: s.restart_on_crash }),
       auto_update: h('input', { type: 'checkbox', checked: s.auto_update }),
       backup_on_stop: h('input', { type: 'checkbox', checked: s.backup_on_stop }),
@@ -1749,6 +1797,7 @@ const TAB_VIEWS = {
         h('p', { class: 'muted small', text: 'Настройки менеджера' }),
         h('div', { class: 'form' },
           field('Название в менеджере', inputs.name),
+          field('Комментарий', inputs.note),
           field('Перезапускать при падении', inputs.restart_on_crash, 'До 3 раз за 30 минут, затем сервер остаётся выключенным и приходит уведомление.'),
           field('Проверка на зомби', h('div', { class: 'row' }, zombieOn, zombieMinutes, h('span', { class: 'muted', text: 'мин' })),
             'Если процесс жив, но не отвечает на запросы Steam столько минут после загрузки - сервер останавливается (с проверкой базы) и запускается снова.'),

@@ -133,6 +133,9 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	mux.HandleFunc("GET /api/v1/info", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"service": "conan-manager", "version": "0.1.0"})
 	})
+	mux.HandleFunc("GET /api/v1/host", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, a.control.HostStats())
+	})
 	mux.HandleFunc("GET /api/v1/jobs/", a.job)
 	mux.HandleFunc("GET /api/v1/events", a.events)
 	mux.HandleFunc("GET /api/v1/hooks", a.hookScripts)
@@ -658,6 +661,7 @@ func (a *api) servers(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, r, http.StatusBadRequest, fmt.Errorf("invalid request body"))
 			return
 		}
+		value.Note = strings.TrimSpace(value.Note)
 		if err := a.control.CheckHooks(value); err != nil {
 			a.fail(w, r, http.StatusBadRequest, err)
 			return
@@ -710,8 +714,15 @@ func (a *api) server(w http.ResponseWriter, r *http.Request) {
 		if sch, err := a.repo.GetSchedule(r.Context(), id); err == nil {
 			next = sch
 		}
+		// How many mods the server carries. The list itself is a tab of its
+		// own; the overview and the card only say how many.
+		modCount := 0
+		if list, err := a.repo.Mods(r.Context(), id); err == nil {
+			modCount = len(list)
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"schedule":  next,
+			"mod_count": modCount,
 			"pending":   a.control.Pending(id),
 			"planned":   a.control.NextPlanned(r.Context(), id),
 			"server":    value,
@@ -766,6 +777,7 @@ type serverPatch struct {
 	Map                     *string                 `json:"map"`
 	Multihome               *string                 `json:"multihome"`
 	BackupOnStop            *bool                   `json:"backup_on_stop"`
+	Note                    *string                 `json:"note"`
 	DiscordMessages         *server.DiscordMessages `json:"discord_messages"`
 	Messages                *server.Messages        `json:"messages"`
 }
@@ -798,6 +810,9 @@ func (a *api) patchServer(w http.ResponseWriter, r *http.Request, id string) {
 		assign(&cfg.Map, patch.Map)
 		assign(&cfg.Multihome, patch.Multihome)
 		assign(&cfg.BackupOnStop, patch.BackupOnStop)
+		if patch.Note != nil {
+			cfg.Note = strings.TrimSpace(*patch.Note)
+		}
 		assign(&cfg.DiscordMessages, patch.DiscordMessages)
 		assign(&cfg.Messages, patch.Messages)
 		if patch.RCONPort != nil {

@@ -174,6 +174,7 @@ type options struct {
 	Map                     string          `json:"map,omitempty"`
 	Multihome               string          `json:"multihome,omitempty"`
 	BackupOnStop            bool            `json:"backup_on_stop,omitempty"`
+	Note                    string          `json:"note,omitempty"`
 	DiscordMessages         DiscordMessages `json:"discord_messages,omitempty"`
 	Messages                Messages        `json:"messages,omitempty"`
 }
@@ -182,6 +183,7 @@ func encodeOptions(c Config) (string, error) {
 	data, err := json.Marshal(options{
 		ZombieCheckSeconds: c.ZombieCheckSeconds, RestartMinUptimeSeconds: c.RestartMinUptimeSeconds,
 		Map: c.Map, Multihome: c.Multihome, BackupOnStop: c.BackupOnStop, Messages: c.Messages,
+		Note: c.Note,
 	})
 	return string(data), err
 }
@@ -193,7 +195,7 @@ func decodeOptions(raw string, c *Config) {
 	}
 	c.ZombieCheckSeconds, c.RestartMinUptimeSeconds = o.ZombieCheckSeconds, o.RestartMinUptimeSeconds
 	c.Map, c.Multihome, c.BackupOnStop, c.DiscordMessages = o.Map, o.Multihome, o.BackupOnStop, o.DiscordMessages
-	c.Messages = o.Messages
+	c.Messages, c.Note = o.Messages, o.Note
 	if c.Messages == nil {
 		c.Messages = Messages{}
 	}
@@ -234,6 +236,11 @@ func (c Config) validateOptions() error {
 	}
 	if c.Multihome != "" && net.ParseIP(c.Multihome) == nil {
 		return ErrInvalidConfig("multihome must be an IP address")
+	}
+	// A comment is for a sentence or two about the server, not a document: the
+	// panel shows it in full, and the record is read on every listing.
+	if len([]rune(c.Note)) > 2000 {
+		return ErrInvalidConfig("note must be at most 2000 characters")
 	}
 	return c.Messages.validate()
 }

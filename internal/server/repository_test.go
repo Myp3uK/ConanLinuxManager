@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,5 +143,45 @@ func TestHookConfigurationIsValidatedAndStored(t *testing.T) {
 	runs, err := repo.HookRuns(ctx, "a", 10)
 	if err != nil || len(runs) != 1 || runs[0].ExitCode != 2 || runs[0].Error != "exit status 2" {
 		t.Fatalf("runs: %+v %v", runs, err)
+	}
+}
+
+func TestNoteIsStoredAndBounded(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	repo := NewRepository(db.DB())
+	ctx := context.Background()
+	cfg := Config{ID: "alpha", Name: "Alpha", Engine: EngineUE5, Runtime: RuntimeNative,
+		InstallDir: "/srv/alpha", SteamCMDDir: "/srv/steamcmd", GamePort: 7777, QueryPort: 27015,
+		Note: "PVE-C, вайп 1 числа\nвторая строка"}
+	if err := repo.Create(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx, cfg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Line breaks are part of the comment: the panel shows it as written.
+	if got.Note != cfg.Note {
+		t.Fatalf("note not kept: %q", got.Note)
+	}
+	got.Note = ""
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = repo.Get(ctx, cfg.ID); err != nil || got.Note != "" {
+		t.Fatalf("note not cleared: %q, %v", got.Note, err)
+	}
+	got.Note = strings.Repeat("я", 2001)
+	if err := repo.Update(ctx, got); err == nil {
+		t.Fatal("a note of 2001 characters should be refused")
+	}
+	// The limit counts characters, not bytes: a Cyrillic note takes two each.
+	got.Note = strings.Repeat("я", 2000)
+	if err := repo.Update(ctx, got); err != nil {
+		t.Fatalf("a note of 2000 characters should fit: %v", err)
 	}
 }

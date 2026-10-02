@@ -33,6 +33,63 @@ type Host struct {
 	Load1        float64 `json:"load1"`
 	MemTotal     uint64  `json:"mem_total_bytes"`
 	MemAvailable uint64  `json:"mem_available_bytes"`
+	// CPUPercent is how much of all the machine's cores were busy between two
+	// readings of CPUTotal, so 100 means every core was saturated. CPUKnown is
+	// false until there are two readings to compare.
+	CPUPercent float64 `json:"cpu_percent"`
+	CPUKnown   bool    `json:"cpu_known"`
+}
+
+// CPUTotal is the CPU time the whole machine has accumulated, from the first
+// line of /proc/stat. It only means something as a difference between two
+// readings: the counters run from boot.
+type CPUTotal struct {
+	At time.Time
+	// Busy is every counter except idle and iowait, which are the time the
+	// cores had nothing to run.
+	Busy  uint64
+	Total uint64
+}
+
+// SampleCPUTotal reads the machine's CPU counters.
+func SampleCPUTotal() (CPUTotal, error) {
+	raw, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return CPUTotal{}, err
+	}
+	return parseCPUTotal(string(raw))
+}
+
+func parseCPUTotal(raw string) (CPUTotal, error) {
+	line, _, _ := strings.Cut(raw, "\n")
+	fields := strings.Fields(line)
+	// The aggregate line is "cpu" with no number; "cpu0" is one core.
+	if len(fields) < 5 || fields[0] != "cpu" {
+		return CPUTotal{}, errors.New("unreadable /proc/stat")
+	}
+	c := CPUTotal{At: time.Now()}
+	for i, field := range fields[1:] {
+		value, err := strconv.ParseUint(field, 10, 64)
+		if err != nil {
+			return CPUTotal{}, errors.New("unreadable /proc/stat")
+		}
+		c.Total += value
+		// The counters are user, nice, system, idle, iowait, and so on.
+		if i != 3 && i != 4 {
+			c.Busy += value
+		}
+	}
+	return c, nil
+}
+
+// BusySince reports the share of the machine's CPUs that was busy between
+// previous and c, from 0 to 100; ok is false without a usable pair, which
+// includes the counters having been reset by a reboot.
+func (c CPUTotal) BusySince(previous CPUTotal) (percent float64, ok bool) {
+	if previous.At.IsZero() || c.Total <= previous.Total || c.Busy < previous.Busy {
+		return 0, false
+	}
+	return float64(c.Busy-previous.Busy) / float64(c.Total-previous.Total) * 100, true
 }
 
 // SampleProcess reads /proc for pid. CPUPercent is the share of one core

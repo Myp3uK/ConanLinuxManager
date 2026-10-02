@@ -38,10 +38,38 @@ type statsState struct {
 	history []StatsPoint
 }
 
+// hostCPUWindow is the shortest gap between two CPU readings that is worth
+// dividing by: closer together, the counters are mostly rounding, and the
+// answer from the previous pair is the better one.
+const hostCPUWindow = 2 * time.Second
+
+// HostStats is the machine as a whole: its memory, its load average and how
+// busy its cores were since the previous call. Every caller shares one pair of
+// readings, so the figure is the same everywhere and asking more often only
+// shortens the window it covers.
+func (c *Controller) HostStats() serverstats.Host {
+	host := serverstats.SampleHost()
+	now, err := serverstats.SampleCPUTotal()
+	c.hostMu.Lock()
+	defer c.hostMu.Unlock()
+	if err == nil {
+		if now.At.Sub(c.hostCPU.At) >= hostCPUWindow || c.hostCPU.At.IsZero() {
+			if busy, ok := now.BusySince(c.hostCPU); ok {
+				c.hostBusy, c.hostKnown = busy, true
+			}
+			c.hostCPU = now
+		}
+	}
+	host.CPUPercent, host.CPUKnown = c.hostBusy, c.hostKnown
+	return host
+}
+
 // Stats returns the latest sample of a server; a stopped server has only the
 // host part.
 func (c *Controller) Stats(id string) Stats {
-	out := Stats{Host: serverstats.SampleHost(), History: []StatsPoint{}}
+	// The host is read before the lock: it touches the filesystem, and the
+	// stats lock is held by every sample of every server.
+	out := Stats{Host: c.HostStats(), History: []StatsPoint{}}
 	c.statsMu.Lock()
 	defer c.statsMu.Unlock()
 	if s := c.stats[id]; s != nil {

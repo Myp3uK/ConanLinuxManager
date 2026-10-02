@@ -65,6 +65,9 @@ type Config struct {
 	// RestartMinUptimeSeconds skips a scheduled restart of a server that has
 	// run for less than this, such as one started minutes before.
 	RestartMinUptimeSeconds int `json:"restart_min_uptime_seconds"`
+	// Note is the operator's own comment about this server. It is shown in the
+	// panel and nowhere else: nothing reads it.
+	Note string `json:"note"`
 	// Map is the game path of the map to load; empty loads the Exiled Lands.
 	Map string `json:"map"`
 	// Multihome binds the server to one address of a host with several.

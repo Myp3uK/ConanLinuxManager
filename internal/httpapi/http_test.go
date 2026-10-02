@@ -202,3 +202,105 @@ func TestNotificationChannelAPI(t *testing.T) {
 		t.Fatalf("events: %d %s", r.Code, r.Body.String())
 	}
 }
+
+// TestServerDetailCarriesTheNoteAndTheModCount covers what the panel's cards
+// and the overview show without opening another tab.
+func TestServerDetailCarriesTheNoteAndTheModCount(t *testing.T) {
+	t.Setenv("CONAN_MANAGER_ADMIN_USERNAME", "admin")
+	t.Setenv("CONAN_MANAGER_ADMIN_PASSWORD", "test-password")
+	db, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := New(db, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	call := func(method, path string, body any) *httptest.ResponseRecorder {
+		var reader *bytes.Reader
+		if body != nil {
+			raw, _ := json.Marshal(body)
+			reader = bytes.NewReader(raw)
+		} else {
+			reader = bytes.NewReader(nil)
+		}
+		request := httptest.NewRequest(method, path, reader)
+		request.SetBasicAuth("admin", "test-password")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	detail := func() map[string]any {
+		response := call(http.MethodGet, "/api/v1/servers/test", nil)
+		if response.Code != http.StatusOK {
+			t.Fatalf("get status: %d, body: %s", response.Code, response.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	dir := t.TempDir()
+	created := call(http.MethodPost, "/api/v1/servers", map[string]any{
+		"id": "test", "name": "Test", "engine": "ue5", "runtime": "native",
+		"install_dir": dir, "steamcmd_dir": filepath.Join(dir, "steamcmd"),
+		"game_port": 7777, "query_port": 27015,
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create status: %d, body: %s", created.Code, created.Body.String())
+	}
+	if got := detail()["mod_count"]; got != float64(0) {
+		t.Errorf("a new server has no mods, got %v", got)
+	}
+
+	// Whitespace around a comment is the operator's typing, not content.
+	if response := call(http.MethodPatch, "/api/v1/servers/test", map[string]any{"note": "  PVE-C, вайп 1 числа \n"}); response.Code != http.StatusOK {
+		t.Fatalf("patch status: %d, body: %s", response.Code, response.Body.String())
+	}
+	if got := detail()["server"].(map[string]any)["note"]; got != "PVE-C, вайп 1 числа" {
+		t.Errorf("note = %q", got)
+	}
+
+	if response := call(http.MethodPut, "/api/v1/servers/test/mods", map[string]any{"mods": []any{
+		map[string]any{"workshop_id": "880454836", "enabled": true},
+		map[string]any{"workshop_id": "1113901982", "enabled": false},
+	}}); response.Code != http.StatusOK {
+		t.Fatalf("mods status: %d, body: %s", response.Code, response.Body.String())
+	}
+	// A mod that is switched off is still one the server carries.
+	if got := detail()["mod_count"]; got != float64(2) {
+		t.Errorf("mod_count = %v, want 2", got)
+	}
+}
+
+func TestHostEndpointAnswers(t *testing.T) {
+	t.Setenv("CONAN_MANAGER_ADMIN_USERNAME", "admin")
+	t.Setenv("CONAN_MANAGER_ADMIN_PASSWORD", "test-password")
+	db, err := store.Open(filepath.Join(t.TempDir(), "manager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	handler := New(db, slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)))
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/host", nil)
+	request.SetBasicAuth("admin", "test-password")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("host status: %d, body: %s", response.Code, response.Body.String())
+	}
+	var host struct {
+		CPUs     int  `json:"cpus"`
+		CPUKnown bool `json:"cpu_known"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &host); err != nil {
+		t.Fatal(err)
+	}
+	if host.CPUs < 1 {
+		t.Errorf("the machine has at least one core, got %d", host.CPUs)
+	}
+	// The first call has no earlier reading to measure against.
+	if host.CPUKnown {
+		t.Error("the first call cannot know how busy the machine was")
+	}
+}

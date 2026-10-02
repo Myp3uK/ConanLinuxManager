@@ -25,6 +25,7 @@ import (
 	"github.com/example/conan-manager/internal/ramstate"
 	"github.com/example/conan-manager/internal/scheduler"
 	"github.com/example/conan-manager/internal/server"
+	"github.com/example/conan-manager/internal/serverstats"
 	"github.com/example/conan-manager/internal/steamcmd"
 	"github.com/example/conan-manager/internal/tmpfs"
 	"github.com/example/conan-manager/internal/unitservice"
@@ -57,6 +58,12 @@ type Controller struct {
 	rconSessions map[string]*rconSession
 	statsMu      sync.Mutex
 	stats        map[string]*statsState
+	// hostMu guards the machine's last CPU reading, which the next one is
+	// measured against.
+	hostMu    sync.Mutex
+	hostCPU   serverstats.CPUTotal
+	hostBusy  float64
+	hostKnown bool
 	// pendingMu guards the delayed restarts, the scheduled runs under way
 	// and the builds already announced.
 	pendingMu          sync.Mutex
