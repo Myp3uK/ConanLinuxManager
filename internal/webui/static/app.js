@@ -86,7 +86,10 @@ function waitText(seconds) {
 // showLogin covers the page with the login form; whatever the page was
 // doing stops until someone logs in.
 function showLogin(message) {
-  if (locked()) return;
+  // The page starts locked, before anyone knows whether this browser is
+  // logged in, so the lock cannot be the test for "the form is already up".
+  if (document.getElementById('login')) return;
+  document.body.classList.remove('booting');
   leaving.forEach(fn => fn());
   leaving = [];
   csrf = ''; me = null;
@@ -2066,12 +2069,42 @@ async function viewNotifications() {
 
 const SOURCE = { panel: ['Задано в панели', 'info'], env: ['Из файла окружения', 'plain'], default: ['По умолчанию', 'plain'] };
 
+// The palettes, and the four colours of each that the picker shows: page,
+// accent, card and text. Adding one is a block in app.css and a line here.
+const THEMES = [
+  ['moon', 'Багровая луна', ['#151212', '#f2565f', '#2a2526', '#c2aeb1']],
+  ['slate', 'Сланец', ['#14181f', '#7ea8e0', '#232a35', '#9eb1ca']],
+  ['dusk', 'Сумрак', ['#131214', '#b18cf0', '#272629', '#b6b0c0']],
+];
+const THEME_KEY = 'cm-theme'; // theme.js reads it before the first paint
+
+function currentTheme() {
+  const set = document.documentElement.dataset.theme;
+  return THEMES.some(t => t[0] === set) ? set : THEMES[0][0];
+}
+function applyTheme(id) {
+  document.documentElement.dataset.theme = id;
+  try { localStorage.setItem(THEME_KEY, id); } catch (e) { toast('Палитра применена, но не запомнится: браузер не даёт сохранять', 'warn'); }
+}
+function themePanel() {
+  const box = h('div', { class: 'themes' });
+  const draw = () => replace(box, THEMES.map(([id, name, colours]) =>
+    h('button', { class: 'theme-pick', 'aria-pressed': String(id === currentTheme()), onclick: () => { applyTheme(id); draw(); } },
+      h('span', { class: 'theme-swatch' }, colours.map(c => h('i', { style: 'background:' + c }))),
+      name)));
+  draw();
+  return h('div', { class: 'panel' }, h('h2', { text: 'Внешний вид' }), box,
+    h('p', { class: 'muted small', style: 'margin:10px 0 0', text: 'Запоминается в этом браузере.' }));
+}
+
 async function viewPanel() {
   const securityBox = h('div');
   const adminsBox = h('div');
   const sessionsBox = h('div');
   const settingsBox = h('div');
-  replace(app, h('div', { class: 'head' }, h('h1', { text: 'Панель' })), securityBox, adminsBox, sessionsBox, settingsBox);
+  // Appearance goes first: it is the one thing here that is read in a
+  // glance, and the page below it runs to several screens.
+  replace(app, h('div', { class: 'head' }, h('h1', { text: 'Панель' })), themePanel(), securityBox, adminsBox, sessionsBox, settingsBox);
 
   const drawSecurity = async () => {
     const data = await api('GET', '/security');
@@ -2337,4 +2370,12 @@ async function render() {
 window.addEventListener('hashchange', render);
 // The page asks who is logged in first; without a session the login form
 // comes up instead of the page.
-loadMe().then(render, e => { if (e.status !== 401) render(); });
+// Until this resolves the page shows nothing but "Загрузка…": a 401 means
+// the login form takes over, and drawing the panel first would flash an
+// interface this browser is not entitled to. A 401 has already called
+// showLogin from api(), so there is nothing left to uncover.
+function startPanel() {
+  document.body.classList.remove('locked', 'booting');
+  render();
+}
+loadMe().then(startPanel, e => { if (e.status !== 401) startPanel(); });

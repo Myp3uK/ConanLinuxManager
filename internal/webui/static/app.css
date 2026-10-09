@@ -1,26 +1,58 @@
-/* Taken from the panel's logo: a black cat under a blood moon. Its black
-   (#0f0e10) is all but neutral and its red is #c30211, so the surfaces are a
-   near-neutral charcoal warmed by a few per cent and the red is spent on the
-   accents alone - furniture at the logo's saturation would read as mauve.
-   The accent is that red lightened until it carries text: #c30211 on a card
-   is 2.3:1, unreadable, while #f2565f is 4.5:1. Every colour here clears 4.5
-   against every surface it sits on, except --muted on the lightest card at
-   4.0, which is where it was before. The page is dark only.
-   Red is also the colour of trouble, so the two are kept apart by lightness:
-   the accent is the deeper, more saturated one, --bad the pale one, and
-   anything that had to tell "information" from "error" was moved off the
-   accent entirely. */
+/* Three dark palettes. The one in use is set on <html data-theme> before the
+   page is drawn, by theme.js; with no attribute the first block below wins,
+   so an untouched browser gets the logo's own colours.
+
+   What is shared sits here: the three status colours never change, because
+   green, amber and red mean the same thing whatever the panel is wearing.
+   Every palette was checked against every surface it sits on - all text
+   clears 4.5:1 except --muted on the lightest card, around 4.0, which is
+   where it was before any of this. */
 :root {
+  --ok: #6dd6a4; --bad: #e88b8b; --warn: #d9a955;
+  --radius: 8px;
+  color-scheme: dark;
+}
+
+/* Багровая луна - from the panel's own logo, a black cat under a blood moon.
+   Its black (#0f0e10) is all but neutral and its red is #c30211, so the
+   surfaces follow that black, warmed by a few per cent, and the red is spent
+   on identity alone: furniture at the logo's saturation would read as mauve.
+   The accent is that red lightened until it carries text - #c30211 on a card
+   is 2.3:1, unreadable, while #f2565f is 4.5:1.
+   Red is also the colour of trouble, so the two are kept apart by lightness:
+   the accent is the deeper, more saturated one and --bad the pale one. */
+:root, :root[data-theme="moon"] {
   --bg: #151212; --surface: #1d191a; --sidebar: #221e1e; --card: #2a2526; --card-hover: #352f30; --inner: #1f1b1c;
   --line: #423b3c; --line-hover: #5c5153;
   --text: #d1cccd; --bright: #ece9ea; --secondary: #c2aeb1; --muted: #96888a;
   --btn: #494142; --btn-hover: #5c5153; --btn2: #352f30; --btn2-hover: #494142;
-  --accent: #f2565f; --accent-hover: #fa7d84;
-  --ok: #6dd6a4; --bad: #e88b8b; --warn: #d9a955; --idle: #96888a;
+  --accent: #f2565f; --accent-hover: #fa7d84; --idle: #96888a;
   --code-comment: #7f8f6a; --code-keyword: #e8828c; --code-string: #d39a6e; --code-number: #b7c98d;
   --code-title: #e2c178; --code-attr: #c4b6b8; --code-meta: #96888a; --code-punct: #9a8d8f;
-  --radius: 8px;
-  color-scheme: dark;
+}
+
+/* Сланец - the blue-grey the panel wore before, taken from moorgame.ru. */
+:root[data-theme="slate"] {
+  --bg: #14181f; --surface: #1a1f27; --sidebar: #1e242d; --card: #232a35; --card-hover: #2b3340; --inner: #1c222b;
+  --line: #353c47; --line-hover: #4a5564;
+  --text: #c8cdd4; --bright: #e6e9ee; --secondary: #9eb1ca; --muted: #7d8590;
+  --btn: #364152; --btn-hover: #475263; --btn2: #2a313c; --btn2-hover: #3a4252;
+  --accent: #7ea8e0; --accent-hover: #a9c6f0; --idle: #7d8590;
+  --code-comment: #6a9955; --code-keyword: #7fa8d8; --code-string: #c9926f; --code-number: #b5cea8;
+  --code-title: #d8c489; --code-attr: #9cc4e4; --code-meta: #7d8590; --code-punct: #98a2af;
+}
+
+/* Сумрак - neutral graphite under a violet accent. Violet is the one hue
+   that collides with none of the three status colours, so nothing had to be
+   given up to fit it in. */
+:root[data-theme="dusk"] {
+  --bg: #131214; --surface: #1b191c; --sidebar: #201e22; --card: #272629; --card-hover: #312f34; --inner: #1d1c1f;
+  --line: #3e3b41; --line-hover: #56535b;
+  --text: #ceccd1; --bright: #eae9ec; --secondary: #b6b0c0; --muted: #8e8994;
+  --btn: #444248; --btn-hover: #56535b; --btn2: #312f34; --btn2-hover: #444248;
+  --accent: #b18cf0; --accent-hover: #c7acf7; --idle: #8e8994;
+  --code-comment: #7f9170; --code-keyword: #b18cf0; --code-string: #cfa07a; --code-number: #b3c891;
+  --code-title: #ddc07c; --code-attr: #b3aec0; --code-meta: #8e8994; --code-punct: #948f9b;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -255,6 +287,8 @@ textarea.secret-area:not(:placeholder-shown) { -webkit-text-security: disc; }
 
 /* ---------- login ---------- */
 body.locked > header.top, body.locked > main { display: none; }
+/* Shown only between the first paint and /me answering. */
+body.booting::before { content: "Загрузка…"; position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); }
 #login { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px 16px;
   background: radial-gradient(1200px 600px at 50% -10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%), var(--bg); }
 .login-card { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
@@ -304,6 +338,13 @@ body.locked > header.top, body.locked > main { display: none; }
 tr[draggable="true"] { cursor: grab; }
 tr.dragging { opacity: .45; }
 tr.drop-here > td { border-top: 2px solid var(--accent); }
+
+/* Palette picker: each choice carries the colours it would apply. */
+.themes { display: flex; gap: 10px; flex-wrap: wrap; }
+.theme-pick { display: flex; align-items: center; gap: 10px; padding: 9px 14px 9px 10px; }
+.theme-pick[aria-pressed="true"] { border-color: var(--accent); color: var(--bright); background: var(--btn2-hover); }
+.theme-swatch { display: inline-flex; gap: 3px; }
+.theme-swatch i { width: 11px; height: 18px; border-radius: 3px; border: 1px solid rgba(255,255,255,.14); }
 
 /* Notification channel: the servers it watches. The list scrolls so twenty
    servers do not push the rest of the form off the screen. */

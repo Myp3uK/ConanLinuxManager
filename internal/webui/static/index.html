@@ -6,9 +6,15 @@
 <title>Conan Manager</title>
 <link rel="icon" href="/ui/favicon.ico" sizes="any">
 <link rel="stylesheet" href="/ui/app.css">
+<!-- Not deferred: it sets the palette before the first paint. -->
+<script src="/ui/theme.js"></script>
 <script src="/ui/app.js" defer></script>
 </head>
-<body>
+<!-- The page starts hidden and says only that it is loading: until /me
+     answers, nobody knows whether this browser is logged in, and showing the
+     interface to someone who is not flashes a panel that is about to be
+     replaced by the login form. -->
+<body class="locked booting">
 <header class="top">
   <a class="brand" href="#/">Conan Manager</a>
   <nav>
