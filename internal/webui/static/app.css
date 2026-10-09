@@ -1,14 +1,24 @@
-/* Palette of moorgame.ru: muted blue-grey backgrounds, off-white text, soft
-   status colours. The site is dark only, and so is the panel. */
+/* Taken from the panel's logo: a black cat under a blood moon. Its black
+   (#0f0e10) is all but neutral and its red is #c30211, so the surfaces are a
+   near-neutral charcoal warmed by a few per cent and the red is spent on the
+   accents alone - furniture at the logo's saturation would read as mauve.
+   The accent is that red lightened until it carries text: #c30211 on a card
+   is 2.3:1, unreadable, while #f2565f is 4.5:1. Every colour here clears 4.5
+   against every surface it sits on, except --muted on the lightest card at
+   4.0, which is where it was before. The page is dark only.
+   Red is also the colour of trouble, so the two are kept apart by lightness:
+   the accent is the deeper, more saturated one, --bad the pale one, and
+   anything that had to tell "information" from "error" was moved off the
+   accent entirely. */
 :root {
-  --bg: #14181f; --surface: #1a1f27; --sidebar: #1e242d; --card: #232a35; --card-hover: #2b3340; --inner: #1c222b;
-  --line: #353c47; --line-hover: #4a5564;
-  --text: #c8cdd4; --bright: #e6e9ee; --secondary: #9eb1ca; --muted: #7d8590;
-  --btn: #364152; --btn-hover: #475263; --btn2: #2a313c; --btn2-hover: #3a4252;
-  --accent: #7ea8e0; --accent-hover: #a9c6f0;
-  --ok: #6dd6a4; --bad: #e88b8b; --warn: #d9a955; --idle: #7d8590;
-  --code-comment: #6a9955; --code-keyword: #7fa8d8; --code-string: #c9926f; --code-number: #b5cea8;
-  --code-title: #d8c489; --code-attr: #9cc4e4; --code-meta: #7d8590; --code-punct: #98a2af;
+  --bg: #151212; --surface: #1d191a; --sidebar: #221e1e; --card: #2a2526; --card-hover: #352f30; --inner: #1f1b1c;
+  --line: #423b3c; --line-hover: #5c5153;
+  --text: #d1cccd; --bright: #ece9ea; --secondary: #c2aeb1; --muted: #96888a;
+  --btn: #494142; --btn-hover: #5c5153; --btn2: #352f30; --btn2-hover: #494142;
+  --accent: #f2565f; --accent-hover: #fa7d84;
+  --ok: #6dd6a4; --bad: #e88b8b; --warn: #d9a955; --idle: #96888a;
+  --code-comment: #7f8f6a; --code-keyword: #e8828c; --code-string: #d39a6e; --code-number: #b7c98d;
+  --code-title: #e2c178; --code-attr: #c4b6b8; --code-meta: #96888a; --code-punct: #9a8d8f;
   --radius: 8px;
   color-scheme: dark;
 }
@@ -29,13 +39,14 @@ strong { color: var(--bright); }
 ::-webkit-scrollbar-corner { background: var(--inner); }
 * { scrollbar-width: thin; scrollbar-color: var(--line) var(--inner); }
 
-.top { display: flex; align-items: center; gap: 24px; padding: 10px 24px; background: var(--sidebar); border-bottom: 1px solid var(--line); box-shadow: 0 2px 5px rgba(0,0,0,.5); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
-.brand { font-weight: 600; color: var(--bright); font-size: 17px; letter-spacing: .04em; text-decoration: none; }
-.brand:hover { color: var(--bright); }
+.top { display: flex; align-items: center; gap: 24px; padding: 10px 24px; background: var(--sidebar); border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); box-shadow: 0 2px 5px rgba(0,0,0,.5); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+/* The wordmark is where the logo's red belongs: identity, never a control. */
+.brand { font-weight: 600; color: var(--accent); font-size: 17px; letter-spacing: .04em; text-decoration: none; }
+.brand:hover { color: var(--accent-hover); }
 .top nav { display: flex; gap: 6px; flex-wrap: wrap; }
 .top nav a { color: var(--text); padding: 6px 12px; border: 1px solid transparent; border-radius: 6px; text-decoration: none; transition: all .2s ease; }
 .top nav a:hover { background: var(--card-hover); border-color: var(--line-hover); color: var(--bright); }
-.top nav a.active { background: var(--btn); border-color: var(--btn-hover); color: var(--bright); }
+.top nav a.active { background: color-mix(in srgb, var(--accent) 14%, var(--btn)); border-color: color-mix(in srgb, var(--accent) 45%, var(--btn-hover)); color: var(--bright); }
 .who { margin-left: auto; color: var(--muted); font-size: 13px; }
 
 main { padding: 20px 24px 60px; }
@@ -123,7 +134,7 @@ label.row { cursor: pointer; }
 .gauge-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
 .gauge-value { color: var(--bright); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .meter { height: 7px; border-radius: 4px; background: var(--inner); border: 1px solid var(--line); overflow: hidden; }
-.meter span { display: block; height: 100%; background: var(--accent); transition: width .4s ease; }
+.meter span { display: block; height: 100%; background: var(--secondary); transition: width .4s ease; }
 .meter.hot span { background: var(--bad); }
 
 /* A comment is shown as it was typed, line breaks and all. */
@@ -136,7 +147,7 @@ tbody tr:hover { background: color-mix(in srgb, var(--card-hover) 45%, transpare
 .scroll { overflow-x: auto; }
 
 pre.log { background: var(--inner); color: var(--text); border: 1px solid var(--line); padding: 12px 14px; border-radius: 6px; max-height: 65vh; overflow: auto; margin: 0; font: 13px/1.55 "Cascadia Mono", "JetBrains Mono", Consolas, ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-pre.log .cmd { color: var(--code-keyword); }
+pre.log .cmd { color: var(--secondary); }
 pre.log .err { color: var(--bad); }
 pre.log .hit { color: var(--warn); }
 
@@ -159,7 +170,7 @@ pre.log .hit { color: var(--warn); }
 
 .notice { padding: 10px 14px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); background: color-mix(in srgb, var(--warn) 8%, var(--surface)); margin-bottom: 12px; }
 .notice.bad { background: color-mix(in srgb, var(--bad) 9%, var(--surface)); border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
-.notice.info { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.notice.info { background: var(--card); border-color: var(--line-hover); }
 
 #toasts { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 30000; width: max-content; max-width: min(560px, calc(100vw - 32px)); pointer-events: none; }
 .toast { --tone: var(--ok); display: flex; align-items: center; justify-content: center; gap: 10px; background: var(--card); color: var(--bright); border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent); border-radius: 999px; padding: 9px 20px 9px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.55), 0 0 0 4px color-mix(in srgb, var(--tone) 10%, transparent); text-align: center; overflow-wrap: anywhere; pointer-events: auto; cursor: pointer; animation: toast-in .22s ease-out; }
@@ -168,7 +179,7 @@ pre.log .hit { color: var(--warn); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-12px) scale(.98); } to { opacity: 1; transform: none; } }
 @keyframes toast-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-12px) scale(.98); } }
 .toast.bad { --tone: var(--bad); border-radius: 14px; }
-.toast.info { --tone: var(--accent); }
+.toast.info { --tone: var(--secondary); }
 
 dialog { border: 1px solid var(--line-hover); border-radius: 10px; background: var(--surface); color: var(--text); padding: 20px; width: min(480px, calc(100vw - 32px)); box-shadow: 0 10px 40px rgba(0,0,0,.6); }
 dialog::backdrop { background: rgba(0,0,0,.55); }
@@ -249,8 +260,8 @@ body.locked > header.top, body.locked > main { display: none; }
 .login-card { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
   padding: 28px 28px 24px; box-shadow: 0 18px 50px rgba(0,0,0,.5); display: flex; flex-direction: column; gap: 14px; }
 .login-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
-.login-logo { width: 44px; height: 44px; border-radius: 10px; display: grid; place-items: center; font-weight: 700; letter-spacing: .04em;
-  color: var(--bg); background: linear-gradient(135deg, var(--accent-hover), var(--accent)); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent); }
+/* The panel's own icon, the same file the browser tab shows. */
+.login-logo { width: 44px; height: 44px; border-radius: 10px; box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent); }
 .login-title { font-size: 19px; font-weight: 600; color: var(--bright); letter-spacing: .03em; }
 .login-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--secondary); }
 .login-field input { width: 100%; padding: 9px 11px; font-size: 15px; }

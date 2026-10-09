@@ -124,7 +124,7 @@ function showLogin(message) {
       form.classList.remove('shake'); void form.offsetWidth; form.classList.add('shake');
     } finally { submit.disabled = false; submit.textContent = 'Войти'; }
   } },
-    h('div', { class: 'login-brand' }, h('div', { class: 'login-logo', text: 'CM' }),
+    h('div', { class: 'login-brand' }, h('img', { class: 'login-logo', src: '/ui/favicon.ico', alt: '', width: 44, height: 44 }),
       h('div', {}, h('div', { class: 'login-title', text: 'Conan Manager' }), h('div', { class: 'muted small', text: 'Управление серверами Conan Exiles' }))),
     message ? h('div', { class: 'notice small', text: message }) : null,
     h('label', { class: 'login-field' }, h('span', { text: 'Логин' }), user),
