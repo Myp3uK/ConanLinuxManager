@@ -110,3 +110,7 @@ sudo ./install.sh --domain manager.example.com --no-deps
 самообновление. Полный список — в [ROADMAP.md](ROADMAP.md).
 
 Интерфейс и документация на русском.
+
+## Лицензия
+
+[MIT](LICENSE).
