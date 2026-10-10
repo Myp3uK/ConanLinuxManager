@@ -93,8 +93,11 @@ func TestDeleteRefusesToRemoveSharedOrShallowDirectories(t *testing.T) {
 	if _, err := c.Repo.Get(context.Background(), "outer"); err != nil {
 		t.Fatal("a refused delete removed the record")
 	}
-	createServer(t, c, "shallow", string(filepath.Separator)+"x", false)
-	if err := c.safeToRemove(context.Background(), server.Config{ID: "shallow", InstallDir: string(filepath.Separator) + "x"}, string(filepath.Separator)+"x"); err == nil {
+	// The directory is not created: the refusal is decided on the path alone.
+	// Making it meant writing at the filesystem root, which only works as
+	// root - the reason this passed on the test host and nowhere else.
+	shallow := string(filepath.Separator) + "x"
+	if err := c.safeToRemove(context.Background(), server.Config{ID: "shallow", InstallDir: shallow}, shallow); err == nil {
 		t.Fatal("a top-level directory may be removed")
 	}
 }
