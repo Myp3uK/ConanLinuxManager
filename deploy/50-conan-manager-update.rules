@@ -1,0 +1,16 @@
+// Install as /etc/polkit-1/rules.d/50-conan-manager-update.rules, root:root 0644.
+//
+// Lets the conan-manager user start the updater and nothing else. The unit it
+// may start runs a root-owned script that only ever installs the current
+// official release, checked against its published checksum, so this grants
+// the panel the power to upgrade the manager - not to run code of its own.
+polkit.addRule(function(action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units" || subject.user !== "conan-manager") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (action.lookup("unit") === "conan-manager-update.service" &&
+        action.lookup("verb") === "start") {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

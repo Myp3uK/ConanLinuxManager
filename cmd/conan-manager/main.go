@@ -17,6 +17,7 @@ import (
 	"github.com/Myp3uK/ConanLinuxManager/internal/panel"
 	"github.com/Myp3uK/ConanLinuxManager/internal/store"
 	"github.com/Myp3uK/ConanLinuxManager/internal/unitservice"
+	"github.com/Myp3uK/ConanLinuxManager/internal/version"
 )
 
 // exitRestart asks systemd to start the manager again; it is not 2, which
@@ -31,6 +32,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, "run-server:", err)
 			os.Exit(1)
 		}
+		return
+	}
+	// The updater reads this to know what is installed without starting the
+	// manager, and an operator reads it to know what is running.
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "version") {
+		fmt.Println(version.String())
 		return
 	}
 	// The rcon client needs nothing of the manager either.

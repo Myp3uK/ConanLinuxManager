@@ -152,6 +152,11 @@ for b in ${BINARIES}; do
 done
 # The RAM launcher runs as root; only root may run it.
 [[ -f "${PREFIX}/conan-launch" ]] && chmod 0700 "${PREFIX}/conan-launch"
+# The updater is root-owned and root-run: it is what decides, on its own, what
+# a request to update actually installs.
+if [[ -f "${SCRIPT_DIR}/scripts/self-update.sh" ]]; then
+  install -m 0755 -o root -g root "${SCRIPT_DIR}/scripts/self-update.sh" "${PREFIX}/self-update.sh"
+fi
 
 # ---------- environment file ----------
 
@@ -204,8 +209,17 @@ install -m 0644 "${SCRIPT_DIR}/deploy/conan-manager.service" /etc/systemd/system
 # polkit rule lets the unprivileged manager start and stop exactly those.
 install -m 0644 "${SCRIPT_DIR}/deploy/conan-server@.service" /etc/systemd/system/conan-server@.service
 install -m 0644 "${SCRIPT_DIR}/deploy/conan-launch@.service" /etc/systemd/system/conan-launch@.service
+# Updating from the panel: the manager may start this one unit, which runs the
+# root-owned updater. Without the rule the panel still reports that a new
+# release exists, and the operator installs it by hand.
+if [[ -f "${PREFIX}/self-update.sh" ]]; then
+  install -m 0644 "${SCRIPT_DIR}/deploy/conan-manager-update.service" /etc/systemd/system/conan-manager-update.service
+fi
 if [[ -d /etc/polkit-1/rules.d ]]; then
   install -m 0644 -o root -g root "${SCRIPT_DIR}/deploy/50-conan-manager.rules" /etc/polkit-1/rules.d/50-conan-manager.rules
+  if [[ -f "${SCRIPT_DIR}/deploy/50-conan-manager-update.rules" ]]; then
+    install -m 0644 -o root -g root "${SCRIPT_DIR}/deploy/50-conan-manager-update.rules" /etc/polkit-1/rules.d/50-conan-manager-update.rules
+  fi
 else
   warn "polkit is not installed: the manager cannot start server units; set CONAN_MANAGER_SERVER_UNITS=false or install polkitd"
 fi

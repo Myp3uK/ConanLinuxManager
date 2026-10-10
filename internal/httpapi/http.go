@@ -175,6 +175,7 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 	mux.HandleFunc("/api/v1/admins/", a.admin)
 	mux.HandleFunc("/api/v1/panel/settings", a.panelSettings)
 	mux.HandleFunc("POST /api/v1/panel/restart", a.restartManager)
+	mux.HandleFunc("/api/v1/panel/update", a.managerUpdate)
 	// The browser interface; everything not under /api is the page and its
 	// assets, behind the same authentication as the API.
 	mux.Handle("/", webui.Handler())

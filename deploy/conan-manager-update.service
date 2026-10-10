@@ -1,0 +1,16 @@
+[Unit]
+Description=Update Conan Manager to the newest published release
+# The manager may start this unit and nothing else; what it installs is
+# decided by the root-owned script, not by whoever asked for it.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/conan-manager/self-update.sh
+# It downloads an archive, replaces the binaries and restarts the manager,
+# which is the unit that asked for it: it must not be killed along with it.
+KillMode=process
+TimeoutStartSec=900
+StandardOutput=journal
+StandardError=journal

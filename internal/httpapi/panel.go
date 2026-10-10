@@ -8,7 +8,58 @@ import (
 	"time"
 
 	"github.com/Myp3uK/ConanLinuxManager/internal/panel"
+	"github.com/Myp3uK/ConanLinuxManager/internal/selfupdate"
+	"github.com/Myp3uK/ConanLinuxManager/internal/systemd"
 )
+
+// updateUnit installs the newest release. The manager is allowed to start it
+// and nothing else; see deploy/50-conan-manager-update.rules.
+const updateUnit = "conan-manager-update.service"
+
+// updaterInstalled reports whether this host can update from the panel. A
+// manager built from source, or installed before the updater existed, has no
+// such unit, and the panel then only reports that a newer release exists.
+func updaterInstalled() bool {
+	_, err := os.Stat("/etc/systemd/system/" + updateUnit)
+	return err == nil
+}
+
+// managerUpdate reports what is running against what is published, and starts
+// the updater when asked. The manager cannot say what gets installed: the unit
+// runs a root-owned script that takes the current official release and checks
+// it against its published checksum.
+func (a *api) managerUpdate(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, selfupdate.Client{}.Check(r.Context(), updaterInstalled()))
+	case http.MethodPost:
+		if !updaterInstalled() {
+			a.fail(w, r, http.StatusConflict, errors.New("обновление из панели не установлено на этом хосте: обновите вручную"))
+			return
+		}
+		status := selfupdate.Client{}.Check(r.Context(), true)
+		if status.Error != "" {
+			a.fail(w, r, http.StatusBadGateway, errors.New(status.Error))
+			return
+		}
+		if !status.Available {
+			a.fail(w, r, http.StatusConflict, errors.New("обновлять нечего: установлена последняя версия"))
+			return
+		}
+		a.logger.Warn("manager update requested", "by", currentUser(r), "from", status.Current, "to", status.Latest)
+		noteAudit(r, "", status.Current+" -> "+status.Latest)
+		// --no-block: the updater restarts this very manager, so waiting for
+		// the unit to finish would mean waiting to be killed.
+		if _, err := systemd.Systemctl(r.Context(), "start", "--no-block", updateUnit); err != nil {
+			a.fail(w, r, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "updating", "to": status.Latest})
+	default:
+		w.Header().Set("Allow", "GET, POST")
+		a.fail(w, r, http.StatusMethodNotAllowed, nil)
+	}
+}
 
 // me tells the interface who is logged in.
 func (a *api) me(w http.ResponseWriter, r *http.Request) {

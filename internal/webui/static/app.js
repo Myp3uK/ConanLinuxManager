@@ -2086,6 +2086,40 @@ function applyTheme(id) {
   document.documentElement.dataset.theme = id;
   try { localStorage.setItem(THEME_KEY, id); } catch (e) { toast('Палитра применена, но не запомнится: браузер не даёт сохранять', 'warn'); }
 }
+// versionPanel shows the running build and, when a newer release is
+// published, offers to install it. The check asks GitHub, so it happens on
+// request rather than on every visit to the page.
+function versionPanel() {
+  const box = h('div');
+  const draw = u => {
+    const update = h('button', { class: 'primary', text: 'Обновить до ' + (u.latest || ''), onclick: e => act(e.target, async () => {
+      if (!await ask(`Обновить менеджер с ${u.current} до ${u.latest}? Игровые серверы продолжат работать: они в своих юнитах. Панель переподключится через несколько секунд.`, { ok: 'Обновить', danger: false })) return;
+      // The baseline is the manager's own clock, not the browser's: the two
+      // need not agree, and the wait is for a start later than this one.
+      const since = new Date((await api('GET', '/panel/settings')).started_at).getTime();
+      await api('POST', '/panel/update');
+      toast('Менеджер обновляется…', 'info');
+      await waitForManager(since);
+      toast('Готово'); check();
+    }) });
+    replace(box,
+      facts([
+        ['Установлена', h('span', { class: 'mono' }, u.current || '-')],
+        u.latest && ['Опубликована', h('span', {}, h('span', { class: 'mono', text: u.latest }),
+          u.url ? h('a', { href: u.url, target: '_blank', rel: 'noopener', style: 'margin-left:8px', text: 'что нового' }) : null)],
+      ]),
+      u.error ? h('div', { class: 'notice bad small', style: 'margin-top:10px', text: 'Не удалось спросить GitHub: ' + u.error }) : null,
+      u.available && u.supported ? h('div', { class: 'row', style: 'margin-top:10px' }, update) : null,
+      u.available && !u.supported ? h('div', { class: 'notice small', style: 'margin-top:10px' },
+        `Вышла ${u.latest}. ${u.reason}. Обновите командой из README.`) : null,
+      !u.available && !u.error ? h('p', { class: 'muted small', style: 'margin:10px 0 0', text: 'Установлена последняя версия.' }) : null);
+  };
+  const check = () => api('GET', '/panel/update').then(draw, e => replace(box, h('p', { class: 'muted', text: e.message })));
+  replace(box, h('p', { class: 'muted', text: 'Проверка…' }));
+  check();
+  return h('div', { class: 'panel' }, h('h2', { text: 'Версия' }), box);
+}
+
 function themePanel() {
   const box = h('div', { class: 'themes' });
   const draw = () => replace(box, THEMES.map(([id, name, colours]) =>
@@ -2104,7 +2138,7 @@ async function viewPanel() {
   const settingsBox = h('div');
   // Appearance goes first: it is the one thing here that is read in a
   // glance, and the page below it runs to several screens.
-  replace(app, h('div', { class: 'head' }, h('h1', { text: 'Панель' })), themePanel(), securityBox, adminsBox, sessionsBox, settingsBox);
+  replace(app, h('div', { class: 'head' }, h('h1', { text: 'Панель' })), versionPanel(), themePanel(), securityBox, adminsBox, sessionsBox, settingsBox);
 
   const drawSecurity = async () => {
     const data = await api('GET', '/security');
@@ -2279,6 +2313,7 @@ const AUDIT_ACTIONS = {
   'DELETE /notifications/{}': 'Удаление канала', 'POST /notifications/{}/test': 'Проверка канала',
   'POST /admins': 'Добавление администратора', 'DELETE /admins/{}': 'Удаление администратора', 'PUT /admins/{}/password': 'Смена пароля',
   'PUT /panel/settings': 'Настройки менеджера', 'POST /panel/restart': 'Перезапуск менеджера',
+  'POST /panel/update': 'Обновление менеджера',
   'DELETE /sessions/{}': 'Завершение сессии', 'POST /sessions/end-others': 'Завершение других сессий',
 };
 
