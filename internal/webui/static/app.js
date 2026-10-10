@@ -448,7 +448,7 @@ function actionButtons(detail, refresh) {
     }) });
   const stop = h('button', { text: 'Остановить', disabled: !running,
     onclick: e => act(e.target, async () => {
-      if (!await ask(`Остановить «${detail.server.name}» сейчас? Игроки получат «Остановка по кнопке»; игра сохранит мир, а если не выйдет за 5 минут, процесс будет убит и база проверена.`, { ok: 'Остановить' })) return;
+      if (!await ask(`Остановить сервер «${detail.server.name}»?`, { ok: 'Остановить' })) return;
       const job = await api('POST', `/servers/${enc(id)}/stop`, { warn: false });
       refresh(); await runJob(job); refresh();
     }) });
