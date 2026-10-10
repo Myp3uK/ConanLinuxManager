@@ -2093,7 +2093,7 @@ function versionPanel() {
   const box = h('div');
   const draw = u => {
     const update = h('button', { class: 'primary', text: 'Обновить до ' + (u.latest || ''), onclick: e => act(e.target, async () => {
-      if (!await ask(`Обновить менеджер с ${u.current} до ${u.latest}? Игровые серверы продолжат работать: они в своих юнитах. Панель переподключится через несколько секунд.`, { ok: 'Обновить', danger: false })) return;
+      if (!await ask('Обновить панель? Сервера затронуты не будут.', { ok: 'Обновить', danger: false })) return;
       // The baseline is the manager's own clock, not the browser's: the two
       // need not agree, and the wait is for a start later than this one.
       const since = new Date((await api('GET', '/panel/settings')).started_at).getTime();
