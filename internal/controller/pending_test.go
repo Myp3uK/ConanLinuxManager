@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/scheduler"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/scheduler"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // runningController has one server that the controller believes is running.

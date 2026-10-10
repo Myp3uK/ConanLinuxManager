@@ -1,8 +1,8 @@
 package notify
 
 import (
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // Category is what the channel form offers: one per message kind. A channel

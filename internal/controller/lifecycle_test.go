@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/store"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/store"
 )
 
 func testController(t *testing.T) (*Controller, func(string, string, string) server.Config) {

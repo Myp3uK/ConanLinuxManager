@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/example/conan-manager/internal/process"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/process"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 var validID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)

@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
 )
 
 // notice is an event as a channel tells it, before any service's format.

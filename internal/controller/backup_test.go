@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/ramstate"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/ramstate"
 	_ "modernc.org/sqlite"
 )
 

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 func testConfig(dir string) server.Config {

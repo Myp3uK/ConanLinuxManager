@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/example/conan-manager/internal/controller"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/controller"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // maxModsInRequest bounds a list a client may send; the repository enforces its

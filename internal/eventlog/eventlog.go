@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
 )
 
 // Entry is a stored event with its row id, which pages the history.

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/process"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/process"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // fakeSystemd answers systemctl calls from a scripted unit state.

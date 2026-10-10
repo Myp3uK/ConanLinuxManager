@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
 )
 
 const botTokenValue = "123456789:AAHsecretsecretsecretsecretsecret_xyz"

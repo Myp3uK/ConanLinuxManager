@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/hooks"
-	"github.com/example/conan-manager/internal/ramstate"
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/steamcmd"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/hooks"
+	"github.com/Myp3uK/ConanLinuxManager/internal/ramstate"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/steamcmd"
 )
 
 // UpdateStatus compares the installed build with the newest one on Steam.

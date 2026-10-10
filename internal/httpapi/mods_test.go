@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/example/conan-manager/internal/controller"
-	"github.com/example/conan-manager/internal/store"
+	"github.com/Myp3uK/ConanLinuxManager/internal/controller"
+	"github.com/Myp3uK/ConanLinuxManager/internal/store"
 )
 
 func modsAPI(t *testing.T) http.Handler {

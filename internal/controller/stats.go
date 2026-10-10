@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/example/conan-manager/internal/serverstats"
+	"github.com/Myp3uK/ConanLinuxManager/internal/serverstats"
 )
 
 const (

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/watchdog"
+	"github.com/Myp3uK/ConanLinuxManager/internal/watchdog"
 )
 
 type Config struct {

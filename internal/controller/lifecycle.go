@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/ramstate"
-	"github.com/example/conan-manager/internal/recoveryalert"
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/sessionlock"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/ramstate"
+	"github.com/Myp3uK/ConanLinuxManager/internal/recoveryalert"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/sessionlock"
 )
 
 type Lifecycle struct {

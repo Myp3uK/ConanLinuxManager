@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
 )
 
 type text struct{ ru, en string }

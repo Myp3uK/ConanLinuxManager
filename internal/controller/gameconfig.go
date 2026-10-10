@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/gameconfig"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/gameconfig"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // acquireForConfig explains the refusal an operator will most often meet.

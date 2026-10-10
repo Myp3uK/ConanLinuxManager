@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/steamcmd"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/steamcmd"
 )
 
 // scriptedSteam prints like SteamCMD and fails when told to.

@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // listName is the file the game reads. Its name is fixed by Conan.

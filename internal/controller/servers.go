@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/example/conan-manager/internal/recoveryalert"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/recoveryalert"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // CheckConflicts refuses a server that would collide with another one on the

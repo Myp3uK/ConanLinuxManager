@@ -13,10 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/conan-manager/internal/bindmount"
-	"github.com/example/conan-manager/internal/ramstate"
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/sessionlock"
+	"github.com/Myp3uK/ConanLinuxManager/internal/bindmount"
+	"github.com/Myp3uK/ConanLinuxManager/internal/ramstate"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/sessionlock"
 	"golang.org/x/sys/unix"
 )
 

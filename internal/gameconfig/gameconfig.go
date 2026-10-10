@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // gameModeSection holds the UPROPERTY(config) members of AConanGameMode. The

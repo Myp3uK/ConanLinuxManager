@@ -13,23 +13,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/audit"
-	"github.com/example/conan-manager/internal/config"
-	"github.com/example/conan-manager/internal/controller"
-	"github.com/example/conan-manager/internal/eventlog"
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/gameconfig"
-	"github.com/example/conan-manager/internal/hooks"
-	"github.com/example/conan-manager/internal/launchservice"
-	"github.com/example/conan-manager/internal/notify"
-	"github.com/example/conan-manager/internal/panel"
-	"github.com/example/conan-manager/internal/scheduler"
-	"github.com/example/conan-manager/internal/security"
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/steamcmd"
-	"github.com/example/conan-manager/internal/store"
-	"github.com/example/conan-manager/internal/unitservice"
-	"github.com/example/conan-manager/internal/webui"
+	"github.com/Myp3uK/ConanLinuxManager/internal/audit"
+	"github.com/Myp3uK/ConanLinuxManager/internal/config"
+	"github.com/Myp3uK/ConanLinuxManager/internal/controller"
+	"github.com/Myp3uK/ConanLinuxManager/internal/eventlog"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/gameconfig"
+	"github.com/Myp3uK/ConanLinuxManager/internal/hooks"
+	"github.com/Myp3uK/ConanLinuxManager/internal/launchservice"
+	"github.com/Myp3uK/ConanLinuxManager/internal/notify"
+	"github.com/Myp3uK/ConanLinuxManager/internal/panel"
+	"github.com/Myp3uK/ConanLinuxManager/internal/scheduler"
+	"github.com/Myp3uK/ConanLinuxManager/internal/security"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/steamcmd"
+	"github.com/Myp3uK/ConanLinuxManager/internal/store"
+	"github.com/Myp3uK/ConanLinuxManager/internal/unitservice"
+	"github.com/Myp3uK/ConanLinuxManager/internal/version"
+	"github.com/Myp3uK/ConanLinuxManager/internal/webui"
 )
 
 // api holds everything the handlers share. Keeping it in one place lets error
@@ -131,7 +132,10 @@ func NewManaged(db *store.Store, logger *slog.Logger, cfg config.Config) (http.H
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /api/v1/info", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"service": "conan-manager", "version": "0.1.0"})
+		writeJSON(w, http.StatusOK, map[string]string{
+			"service": "conan-manager", "version": version.Version,
+			"commit": version.Commit, "built": version.Date,
+		})
 	})
 	mux.HandleFunc("GET /api/v1/host", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, a.control.HostStats())

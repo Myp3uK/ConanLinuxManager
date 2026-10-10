@@ -1,5 +1,5 @@
 package main
 
-import "github.com/example/conan-manager/internal/bindmount"
+import "github.com/Myp3uK/ConanLinuxManager/internal/bindmount"
 
 func run(action, saved, ram string) error { return bindmount.Run(action, saved, ram) }

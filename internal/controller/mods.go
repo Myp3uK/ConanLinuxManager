@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/hooks"
-	"github.com/example/conan-manager/internal/mods"
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/steamcmd"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/hooks"
+	"github.com/Myp3uK/ConanLinuxManager/internal/mods"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/steamcmd"
 )
 
 // ModsOptions choose how a mod install runs.

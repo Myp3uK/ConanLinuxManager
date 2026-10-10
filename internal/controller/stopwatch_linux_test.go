@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
 	_ "modernc.org/sqlite"
 )
 

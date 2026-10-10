@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/example/conan-manager/internal/recoveryalert"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/recoveryalert"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 	_ "modernc.org/sqlite"
 )
 

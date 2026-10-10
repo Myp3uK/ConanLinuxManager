@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // Files are the game's own INI files, which the manager knows by a short name.

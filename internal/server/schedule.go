@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/example/conan-manager/internal/scheduler"
+	"github.com/Myp3uK/ConanLinuxManager/internal/scheduler"
 )
 
 const scheduleColumns = `server_id, action, enabled, mode, interval_seconds, COALESCE(daily_time,''),

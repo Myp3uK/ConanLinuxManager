@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/hooks"
-	"github.com/example/conan-manager/internal/process"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/hooks"
+	"github.com/Myp3uK/ConanLinuxManager/internal/process"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 func (c *Controller) emit(t events.Type, cfg server.Config, message string, details map[string]string) {

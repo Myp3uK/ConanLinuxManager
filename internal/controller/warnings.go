@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // Every message of a kind that goes to the game is said there, whether

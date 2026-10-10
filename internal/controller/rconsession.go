@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/example/conan-manager/internal/rcon"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/rcon"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // The manager keeps one RCON connection per running server instead of

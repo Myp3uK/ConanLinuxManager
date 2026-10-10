@@ -11,8 +11,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/example/conan-manager/internal/audit"
-	"github.com/example/conan-manager/internal/panel"
+	"github.com/Myp3uK/ConanLinuxManager/internal/audit"
+	"github.com/Myp3uK/ConanLinuxManager/internal/panel"
 )
 
 type userKey struct{}

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/example/conan-manager/internal/store"
+	"github.com/Myp3uK/ConanLinuxManager/internal/store"
 )
 
 func panelHandler(t *testing.T) http.Handler {

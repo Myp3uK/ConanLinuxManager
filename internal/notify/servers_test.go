@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
 )
 
 // makeServers puts rows in the servers table, which the channel's servers

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 func TestSeedWritesOnlyMissingFiles(t *testing.T) {

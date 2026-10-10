@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // A delayed restart happens a fixed time after it is set, with the same

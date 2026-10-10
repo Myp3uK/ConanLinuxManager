@@ -2,10 +2,10 @@ package controller
 
 import (
 	"context"
-	"github.com/example/conan-manager/internal/process"
-	"github.com/example/conan-manager/internal/ramstate"
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/watchdog"
+	"github.com/Myp3uK/ConanLinuxManager/internal/process"
+	"github.com/Myp3uK/ConanLinuxManager/internal/ramstate"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/watchdog"
 )
 
 // AdoptLaunchers reconnects to independent units after manager restart. On

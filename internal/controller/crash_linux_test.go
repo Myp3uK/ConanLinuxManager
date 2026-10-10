@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
 )
 
 // fakeGame installs a script where the native runtime expects the server binary.

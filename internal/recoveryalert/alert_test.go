@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 func TestWriteAndClear(t *testing.T) {

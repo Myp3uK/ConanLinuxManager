@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/config"
-	"github.com/example/conan-manager/internal/store"
+	"github.com/Myp3uK/ConanLinuxManager/internal/config"
+	"github.com/Myp3uK/ConanLinuxManager/internal/store"
 )
 
 // browser keeps cookies between requests, as a browser does.

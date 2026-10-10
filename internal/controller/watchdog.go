@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/hooks"
-	"github.com/example/conan-manager/internal/process"
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/serverstats"
-	"github.com/example/conan-manager/internal/watchdog"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/hooks"
+	"github.com/Myp3uK/ConanLinuxManager/internal/process"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/serverstats"
+	"github.com/Myp3uK/ConanLinuxManager/internal/watchdog"
 )
 
 type Health struct {

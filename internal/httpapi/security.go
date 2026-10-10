@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/config"
+	"github.com/Myp3uK/ConanLinuxManager/internal/config"
 )
 
 // check is one finding of the security self-check.

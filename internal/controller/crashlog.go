@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 const (

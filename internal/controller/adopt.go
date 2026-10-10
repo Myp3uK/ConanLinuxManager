@@ -3,8 +3,8 @@ package controller
 import (
 	"context"
 
-	"github.com/example/conan-manager/internal/process"
-	"github.com/example/conan-manager/internal/watchdog"
+	"github.com/Myp3uK/ConanLinuxManager/internal/process"
+	"github.com/Myp3uK/ConanLinuxManager/internal/watchdog"
 )
 
 // AdoptUnits reconnects to server units that kept running while the manager

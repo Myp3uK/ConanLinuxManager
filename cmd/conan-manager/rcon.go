@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/rcon"
+	"github.com/Myp3uK/ConanLinuxManager/internal/rcon"
 )
 
 // runRcon is the rcon subcommand, a standalone console client:

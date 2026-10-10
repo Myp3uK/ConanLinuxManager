@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/mods"
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/steamcmd"
+	"github.com/Myp3uK/ConanLinuxManager/internal/mods"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/steamcmd"
 )
 
 // fakeWorkshop answers for Steam's Workshop API.

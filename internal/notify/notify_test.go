@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/security"
-	"github.com/example/conan-manager/internal/store"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/security"
+	"github.com/Myp3uK/ConanLinuxManager/internal/store"
 )
 
 const token = "sEcReT-ToKeN_abcdefghijklmnopqrstuvwxyz0123456789"

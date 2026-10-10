@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/watchdog"
+	"github.com/Myp3uK/ConanLinuxManager/internal/watchdog"
 )
 
 func TestUnavailableObservationDoesNotStopLifecycle(t *testing.T) {

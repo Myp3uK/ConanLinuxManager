@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/config"
+	"github.com/Myp3uK/ConanLinuxManager/internal/config"
 )
 
 // The defaults the panel shows must be the ones config applies.

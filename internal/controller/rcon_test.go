@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/example/conan-manager/internal/gameconfig"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/gameconfig"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 func TestRconSettingsComeFromGameIni(t *testing.T) {

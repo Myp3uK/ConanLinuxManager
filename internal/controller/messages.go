@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // messageEvent is the event that carries each announced kind to Discord.

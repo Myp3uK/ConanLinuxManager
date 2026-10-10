@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/gameconfig"
-	"github.com/example/conan-manager/internal/rcon"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/gameconfig"
+	"github.com/Myp3uK/ConanLinuxManager/internal/rcon"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // rconTimeout bounds one RCON exchange; the game answers in milliseconds, and

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/conan-manager/internal/panel"
+	"github.com/Myp3uK/ConanLinuxManager/internal/panel"
 )
 
 // me tells the interface who is logged in.

@@ -1,4 +1,4 @@
-module github.com/example/conan-manager
+module github.com/Myp3uK/ConanLinuxManager
 
 go 1.24
 

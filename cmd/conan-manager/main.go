@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/conan-manager/internal/config"
-	"github.com/example/conan-manager/internal/httpapi"
-	"github.com/example/conan-manager/internal/panel"
-	"github.com/example/conan-manager/internal/store"
-	"github.com/example/conan-manager/internal/unitservice"
+	"github.com/Myp3uK/ConanLinuxManager/internal/config"
+	"github.com/Myp3uK/ConanLinuxManager/internal/httpapi"
+	"github.com/Myp3uK/ConanLinuxManager/internal/panel"
+	"github.com/Myp3uK/ConanLinuxManager/internal/store"
+	"github.com/Myp3uK/ConanLinuxManager/internal/unitservice"
 )
 
 // exitRestart asks systemd to start the manager again; it is not 2, which

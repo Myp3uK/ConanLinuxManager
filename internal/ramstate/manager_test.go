@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 func TestLoadAndFlushKeepsSavedOnSSD(t *testing.T) {

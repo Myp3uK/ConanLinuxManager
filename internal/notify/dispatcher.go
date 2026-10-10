@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
 )
 
 // Dispatcher delivers events to every channel that wants them. It runs as a

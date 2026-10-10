@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/server"
-	"github.com/example/conan-manager/internal/unitservice"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/unitservice"
 )
 
 // unitHost pretends to be systemd for one server unit that survives the

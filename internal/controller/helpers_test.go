@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 func createServer(t *testing.T, c *Controller, id, install string, restartOnCrash bool) {

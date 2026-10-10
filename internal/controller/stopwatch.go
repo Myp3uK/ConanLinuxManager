@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/example/conan-manager/internal/dbcheck"
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/ramstate"
-	"github.com/example/conan-manager/internal/recoveryalert"
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/dbcheck"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/ramstate"
+	"github.com/Myp3uK/ConanLinuxManager/internal/recoveryalert"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // DefaultStopTimeout is how long a server may take to stop after SIGTERM.

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 type warnRun struct {

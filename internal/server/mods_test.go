@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/conan-manager/internal/store"
+	"github.com/Myp3uK/ConanLinuxManager/internal/store"
 )
 
 func TestParseWorkshopID(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/example/conan-manager/internal/events"
-	"github.com/example/conan-manager/internal/gameconfig"
+	"github.com/Myp3uK/ConanLinuxManager/internal/events"
+	"github.com/Myp3uK/ConanLinuxManager/internal/gameconfig"
 )
 
 func TestConfigEditsAreVersionedAndReversible(t *testing.T) {

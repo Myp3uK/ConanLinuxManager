@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/example/conan-manager/internal/server"
+	"github.com/Myp3uK/ConanLinuxManager/internal/server"
 )
 
 // Install puts a downloaded item's .pak files where the game looks for them and
